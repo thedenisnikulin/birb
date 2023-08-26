@@ -4,9 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"main/internal/storage"
-	"main/pkg/bvalue"
+	bval "main/pkg/bvalue"
 	"main/pkg/codec"
-	"reflect"
 	"strconv"
 )
 
@@ -37,24 +36,25 @@ func NewNamedStore[R any](
 	return &NamedStore[R]{ns, storage, codec}, nil
 }
 
-func (s *NamedStore[R]) Upsert(pk bvalue.Value, record R) {
-	key := keyFrom(s.name, PKKey, pk)
+// TODO add to index as well
+func (s *NamedStore[R]) Upsert(pk bval.Value, record R) {
+	key := key(s.name, PKKey, pk)
 	recb, _ := s.codec.Encode(record)
 	s.storage.Set(key, recb)
 }
 
-func (s *NamedStore[R]) Delete(pk bvalue.Value) {
-	key := keyFrom(s.name, PKKey, pk)
+func (s *NamedStore[R]) Delete(pk bval.Value) {
+	key := key(s.name, PKKey, pk)
 	s.storage.Del(key)
 }
 
-func (s *NamedStore[R]) Find(pk bvalue.Value) (R, bool) {
-	key := keyFrom(s.name, PKKey, pk)
+func (s *NamedStore[R]) Find(pk bval.Value) (R, bool) {
+	key := key(s.name, PKKey, pk)
 	return find(s.storage, s.codec, key)
 }
 
-func (s *NamedStore[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
-	idxKey := keyFrom(s.name, name, value)
+func (s *NamedStore[R]) FindByIndex(name string, value bval.Value) (R, bool) {
+	idxKey := indexKey(s.name, name, value)
 	recordKey, ok := s.storage.Get(idxKey)
 	if !ok {
 		var r R
@@ -92,28 +92,14 @@ func (s *NamedStore[R]) AddIndex(fieldName string) error {
 		}
 
 		// create index: index is basically "a pointer" to the PK key
-		indexKey := keyFrom(s.name, fieldName, []byte(value))
-		s.storage.Set(indexKey, []byte(key))
+		indexKey := indexKey(s.name, fieldName, []byte(value))
+		s.storage.Set(indexKey, bval.Value(key))
 	}
 
 	return nil
 }
 
 func (s *NamedStore[R]) Tx(run func(tx *TxStore[R])) {
-}
-
-func fieldValueByTag(v any, tag, tagValue string) (reflect.Value, bool) {
-	stype := reflect.TypeOf(v)
-	sval := reflect.ValueOf(v)
-	for i := 0; i < stype.NumField(); i++ {
-		f := stype.Field(i)
-		val, ok := f.Tag.Lookup(tag)
-		if ok && val == tagValue {
-			return sval.FieldByName(f.Name), true
-		}
-	}
-
-	return reflect.Value{}, false
 }
 
 func find[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key string) (R, bool) {
@@ -127,10 +113,10 @@ func find[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key stri
 	return rec, true
 }
 
-func keyFrom(ns string, field string, value []byte) string {
-	return prefixFrom(ns, field) + string(value)
+func indexKey(ns string, field string, value bval.Value) string {
+	return "idx_" + key(ns, field, value)
 }
 
-func prefixFrom(ns, field string) string {
-	return ns + "_" + field + "_"
+func key(ns string, field string, value bval.Value) string {
+	return ns + "_" + field + "_" + value.String()
 }

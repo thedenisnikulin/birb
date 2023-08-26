@@ -35,7 +35,10 @@ func TestNamedStore(t *testing.T) {
 	recByPk, okByPk := namedStore.Find(bval.FromInt(1))
 
 	namedStore.AddIndex("name")
-	recByIdx, okByIdx := namedStore.FindByIndex("name", bval.FromString("rwrwrw"))
+	recByNameIdx, okByNameIdx := namedStore.FindByIndex("name", bval.FromString("rwrwrw"))
+
+	namedStore.AddIndex("age")
+	recByAgeIdx, okByAgeIdx := namedStore.FindByIndex("age", bval.FromInt(21))
 
 	for k, v := range prefixTreeStorage.ToMap() {
 		t.Logf("[%s]\t= [%s]", k, string(v))
@@ -45,6 +48,9 @@ func TestNamedStore(t *testing.T) {
 	assert.True(t, okByPk)
 	assert.Equal(t, u, recByPk)
 
-	assert.True(t, okByIdx)
-	assert.Equal(t, u, recByIdx)
+	assert.True(t, okByNameIdx)
+	assert.Equal(t, u, recByNameIdx)
+
+	assert.True(t, okByAgeIdx)
+	assert.Equal(t, u, recByAgeIdx)
 }

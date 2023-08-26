@@ -38,7 +38,7 @@ func NewTx[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], 
 
 // Finds a record only that which was created before tx started
 func (tx *TxStore[R]) Find(pk bvalue.Value) (R, bool) {
-	baseKey := keyFrom(tx.ns, PKKey, pk)
+	baseKey := key(tx.ns, PKKey, pk)
 	rng := tx.storage.Range(baseKey)
 	var mostRecentTs int64
 	var mostRecentKey string
