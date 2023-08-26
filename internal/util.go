@@ -1,8 +1,10 @@
-package relational
+package internal
 
-import "reflect"
+import (
+	"reflect"
+)
 
-func fieldValueByTag(v any, tag, tagValue string) (reflect.Value, bool) {
+func FieldValueByTag(v any, tag, tagValue string) (reflect.Value, bool) {
 	stype := reflect.TypeOf(v)
 	sval := reflect.ValueOf(v)
 	for i := 0; i < stype.NumField(); i++ {

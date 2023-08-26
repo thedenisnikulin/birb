@@ -1,9 +1,9 @@
 package relational
 
 import (
-	"main/internal/storage"
-	bval "main/pkg/bvalue"
-	"main/pkg/codec"
+	bval "birb/bvalue"
+	"birb/codec"
+	"birb/storage"
 	"testing"
 
 	"github.com/stretchr/testify/assert"

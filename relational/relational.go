@@ -1,8 +1,8 @@
 package relational
 
 import (
-	"main/internal/storage"
-	"main/pkg/codec"
+	"birb/codec"
+	"birb/storage"
 )
 
 type RelationalStore struct {
@@ -10,5 +10,5 @@ type RelationalStore struct {
 }
 
 func Use[R any](relStore *RelationalStore, codec codec.Codec[R], ns string) (*NamedStore[R], error) {
-	return NewNamedStore[R](ns, relStore.storage, codec)
+	return NewNamedStore(ns, relStore.storage, codec)
 }

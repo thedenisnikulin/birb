@@ -1,6 +1,6 @@
-package relational
+package birb
 
-import bval "main/pkg/bvalue"
+import bval "birb/bvalue"
 
 type Store[R any] interface {
 	Find(pk bval.Value) (R, bool)

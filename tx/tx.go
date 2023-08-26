@@ -1,15 +1,20 @@
-package relational
+package tx
 
 import (
-	"main/internal/storage"
-	"main/pkg/bvalue"
-	"main/pkg/codec"
+	"birb"
+	"birb/bvalue"
+	"birb/codec"
+	"birb/internal"
+	"birb/storage"
 	"strconv"
 	"strings"
 	"time"
 )
 
-var _ Store[any] = (*TxStore[any])(nil)
+var (
+	_ birb.Store[any] = (*TxStore[any])(nil)
+	_ birb.Tx         = (*TxStore[any])(nil)
+)
 
 // Data layout patterns
 // [key] = [value]	- key for a value
@@ -38,7 +43,7 @@ func NewTx[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], 
 
 // Finds a record only that which was created before tx started
 func (tx *TxStore[R]) Find(pk bvalue.Value) (R, bool) {
-	baseKey := key(tx.ns, PKKey, pk)
+	baseKey := internal.Key(tx.ns, internal.PrimaryKeyTag, pk)
 	rng := tx.storage.Range(baseKey)
 	var mostRecentTs int64
 	var mostRecentKey string
@@ -61,7 +66,7 @@ func (tx *TxStore[R]) Find(pk bvalue.Value) (R, bool) {
 		return r, false
 	}
 
-	return find(tx.storage, tx.codec, mostRecentKey)
+	return internal.Find(tx.storage, tx.codec, mostRecentKey)
 }
 
 func (*TxStore[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
@@ -77,22 +82,10 @@ func (*TxStore[R]) Delete(pk bvalue.Value) {
 	panic("unimplemented")
 }
 
-func (tx *TxStore[R]) Commit() error {
-	panic("not implemented")
-}
-func (tx *TxStore[R]) Rollback() {
+func (*TxStore[R]) Commit() error {
 	panic("not implemented")
 }
 
-type TxID struct {
-	Id    uint32 // allowed to wrap
-	Epoch uint32
-}
-
-func (id TxID) Uint64() uint64 {
-	return uint64(id.Id<<32 + id.Epoch)
-}
-
-func TxIdFromUint64(n uint64) TxID {
-	return TxID{Id: uint32(n >> 32), Epoch: uint32(n)}
+func (*TxStore[R]) Rollback() {
+	panic("not implemented")
 }
