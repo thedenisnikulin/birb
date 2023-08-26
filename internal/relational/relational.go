@@ -2,15 +2,13 @@ package relational
 
 import (
 	"main/internal/storage"
+	"main/pkg/codec"
 )
 
-type Record []byte
-
 type RelationalStore struct {
-	storage storage.Storage[Record]
-	codec   Codec[map[string]any]
+	storage storage.Storage[[]byte]
 }
 
-func (s *RelationalStore) Use(ns string) *NamedStore {
-	return &NamedStore{ns, s.storage, s.codec}
+func Use[R any](relStore *RelationalStore, codec codec.Codec[R], ns string) (*NamedStore[R], error) {
+	return NewNamedStore[R](ns, relStore.storage, codec)
 }

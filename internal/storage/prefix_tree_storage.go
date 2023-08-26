@@ -20,6 +20,10 @@ func (s *prefixTreeStorage[V]) Set(key string, value V) {
 	s.inner.Add(key, value)
 }
 
+func (s *prefixTreeStorage[V]) Del(key string) {
+	s.inner.Del(key)
+}
+
 func (s *prefixTreeStorage[V]) Range(prefix string) Range[string, V] {
 	keys, _ := s.inner.Suggest(prefix)
 	return &prefixTreeRange[V]{keys, 0, s}

@@ -2,36 +2,40 @@ package relational
 
 import (
 	"main/internal/storage"
-	"strconv"
+	bval "main/pkg/bvalue"
+	"main/pkg/codec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
+type user struct {
+	Name string `bson:"name"`
+	Age  int    `bson:"age"`
+}
+
 func TestNamedStore(t *testing.T) {
 	// arrange
-	prefixTreeStorage := storage.NewPrefixTreeStorage[Record]()
-	jsonCodec := NewJsonCodec[map[string]any]()
-	rel := RelationalStore{prefixTreeStorage, jsonCodec}
+	prefixTreeStorage := storage.NewPrefixTreeStorage[[]byte]()
+	bsonCodec := codec.NewBsonCodec[user]()
+	rel := RelationalStore{prefixTreeStorage}
 
-	namedStore := rel.Use("users")
-
-	value := map[string]any{
-		"name": "rwrwrw",
-		"age":  float64(21),
+	namedStore, err := Use(&rel, bsonCodec, "users")
+	if err != nil {
+		panic(err)
 	}
-	valueBytes, _ := jsonCodec.Encode(value)
-	record := Record(valueBytes)
-	id := []byte(strconv.Itoa(1))
+
+	u := user{
+		Name: "rwrwrw",
+		Age:  21,
+	}
 
 	// act
-	namedStore.Insert(id, record)
-	foundRecordByPk, okByPk := namedStore.Find(id)
-	foundValueByPk, decodeErrByPk := jsonCodec.Decode(foundRecordByPk)
+	namedStore.Upsert(bval.FromInt(1), u)
+	recByPk, okByPk := namedStore.Find(bval.FromInt(1))
 
 	namedStore.AddIndex("name")
-	foundRecordByIdx, okByIdx := namedStore.FindByIndex(Field{"name", []byte("rwrwrw")})
-	foundValueByIdx, decodeErrByIdx := jsonCodec.Decode(foundRecordByIdx)
+	recByIdx, okByIdx := namedStore.FindByIndex("name", bval.FromString("rwrwrw"))
 
 	for k, v := range prefixTreeStorage.ToMap() {
 		t.Logf("[%s]\t= [%s]", k, string(v))
@@ -39,10 +43,8 @@ func TestNamedStore(t *testing.T) {
 
 	// assert
 	assert.True(t, okByPk)
-	assert.NoError(t, decodeErrByPk)
-	assert.Equal(t, value, foundValueByPk)
+	assert.Equal(t, u, recByPk)
 
 	assert.True(t, okByIdx)
-	assert.NoError(t, decodeErrByIdx)
-	assert.Equal(t, value, foundValueByIdx)
+	assert.Equal(t, u, recByIdx)
 }

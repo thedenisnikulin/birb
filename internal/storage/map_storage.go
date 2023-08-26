@@ -19,6 +19,10 @@ func (s *syncMapStorage[V]) Set(key string, value V) {
 	s.inner.Store(key, value)
 }
 
+func (s *syncMapStorage[V]) Del(key string) {
+	s.inner.Delete(key)
+}
+
 func (*syncMapStorage[V]) Range(prefix string) (V, bool) {
 	panic("unimplemented, requires a data structure more complex than a map")
 }

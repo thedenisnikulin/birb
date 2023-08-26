@@ -1,7 +1,12 @@
 package relational
 
 import (
+	"errors"
+	"fmt"
 	"main/internal/storage"
+	"main/pkg/bvalue"
+	"main/pkg/codec"
+	"reflect"
 	"strconv"
 )
 
@@ -9,46 +14,75 @@ const (
 	PKKey string = "pk"
 )
 
-type NamedStore struct {
+var _ Store[any] = (*NamedStore[any])(nil)
+var _ Indexer = (*NamedStore[any])(nil)
+
+// TODO each function should use transaction
+// since e.g. every single 'upsert' is a smol tx
+type NamedStore[R any] struct {
 	name    string
-	storage storage.Storage[Record]
-	codec   Codec[map[string]any]
+	storage storage.Storage[[]byte]
+	codec   codec.Codec[R]
 }
 
-func (s *NamedStore) Insert(pk []byte, record Record) {
+func NewNamedStore[R any](
+	ns string,
+	storage storage.Storage[[]byte],
+	codec codec.Codec[R],
+) (*NamedStore[R], error) {
+	var val R
+	if _, err := codec.Encode(val); err != nil {
+		return nil, fmt.Errorf("cannot create NamedStore since the record type is not serializable: %w", err)
+	}
+	return &NamedStore[R]{ns, storage, codec}, nil
+}
+
+func (s *NamedStore[R]) Upsert(pk bvalue.Value, record R) {
 	key := keyFrom(s.name, PKKey, pk)
-	s.storage.Set(key, record)
+	recb, _ := s.codec.Encode(record)
+	s.storage.Set(key, recb)
 }
 
-func (s *NamedStore) Find(pk []byte) (Record, bool) {
+func (s *NamedStore[R]) Delete(pk bvalue.Value) {
 	key := keyFrom(s.name, PKKey, pk)
-	return s.storage.Get(key)
+	s.storage.Del(key)
 }
 
-func (s *NamedStore) FindByIndex(field Field) (Record, bool) {
-	idxKey := keyFrom(s.name, field.name, field.value)
+func (s *NamedStore[R]) Find(pk bvalue.Value) (R, bool) {
+	key := keyFrom(s.name, PKKey, pk)
+	return find(s.storage, s.codec, key)
+}
+
+func (s *NamedStore[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
+	idxKey := keyFrom(s.name, name, value)
 	recordKey, ok := s.storage.Get(idxKey)
 	if !ok {
-		return Record{}, false
+		var r R
+		return r, false
 	}
 
-	return s.storage.Get(string(recordKey))
+	return find(s.storage, s.codec, string(recordKey))
 }
 
-func (s *NamedStore) AddIndex(fieldName string) {
+func (s *NamedStore[R]) AddIndex(fieldName string) error {
 	rng := s.storage.Range(s.name)
 	for rng.Next() {
-		key, rec := rng.Value()
+		key, recb := rng.Value()
 
-		// decode Record into comprehensible type
-		recMap, err := s.codec.Decode(rec)
+		// decode record into comprehensible type and find field's value
+		rec, err := s.codec.Decode(recb)
 		if err != nil {
 			panic("decoding record when adding index: " + err.Error())
 		}
 
+		field, ok := fieldValueByTag(rec, s.codec.Tag(), fieldName)
+		if !ok {
+			return errors.New("cannot add index for non-existing field")
+		}
+
 		// check index field type: only allow int and string
 		var value string
-		switch v := recMap[fieldName].(type) {
+		switch v := field.Interface().(type) {
 		case int:
 			value = strconv.Itoa(v)
 		case string:
@@ -59,8 +93,38 @@ func (s *NamedStore) AddIndex(fieldName string) {
 
 		// create index: index is basically "a pointer" to the PK key
 		indexKey := keyFrom(s.name, fieldName, []byte(value))
-		s.storage.Set(indexKey, Record(key))
+		s.storage.Set(indexKey, []byte(key))
 	}
+
+	return nil
+}
+
+func (s *NamedStore[R]) Tx(run func(tx *TxStore[R])) {
+}
+
+func fieldValueByTag(v any, tag, tagValue string) (reflect.Value, bool) {
+	stype := reflect.TypeOf(v)
+	sval := reflect.ValueOf(v)
+	for i := 0; i < stype.NumField(); i++ {
+		f := stype.Field(i)
+		val, ok := f.Tag.Lookup(tag)
+		if ok && val == tagValue {
+			return sval.FieldByName(f.Name), true
+		}
+	}
+
+	return reflect.Value{}, false
+}
+
+func find[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key string) (R, bool) {
+	recb, ok := storage.Get(key)
+	if !ok {
+		var r R
+		return r, false
+	}
+
+	rec, _ := codec.Decode(recb)
+	return rec, true
 }
 
 func keyFrom(ns string, field string, value []byte) string {
@@ -69,9 +133,4 @@ func keyFrom(ns string, field string, value []byte) string {
 
 func prefixFrom(ns, field string) string {
 	return ns + "_" + field + "_"
-}
-
-type Field struct {
-	name  string
-	value []byte
 }
