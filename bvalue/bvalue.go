@@ -1,4 +1,4 @@
-// provides type from binary value representation
+// Provides types for binary value representation
 package bvalue
 
 import "strconv"
