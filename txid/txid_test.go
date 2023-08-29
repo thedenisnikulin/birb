@@ -1,4 +1,4 @@
-package tx
+package txid
 
 import (
 	"testing"
@@ -9,7 +9,7 @@ import (
 
 func TestTxID(t *testing.T) {
 	// arrange
-	txid := TxIDFromUint64(0x12345678_87654321)
+	txid := FromUint64(0x12345678_87654321)
 
 	// act
 	txid64 := txid.Uint64()
@@ -23,8 +23,8 @@ func TestTxID(t *testing.T) {
 
 func TestTxIDCmp(t *testing.T) {
 	// arrange
-	lhs := TxIDFromUint64(0x64EA8560_00000002) // TODO think how better use ordering cos it sucks apparently
-	rhs := TxIDFromUint64(0x64EA8560_00000050)
+	lhs := FromUint64(0x64EA8560_00000002)
+	rhs := FromUint64(0x64EA8560_00000050)
 
 	// act
 	less := lhs.Less(rhs)
@@ -37,7 +37,7 @@ func TestTxIDCmp(t *testing.T) {
 
 func TestTxIDInc(t *testing.T) {
 	// arrange
-	txid := TxIDFromUint64(0x12345678_00000001)
+	txid := FromUint64(0x12345678_00000001)
 	_, xid := txid.나뉘다()
 	now := time.Now().Unix()
 

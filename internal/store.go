@@ -1,22 +1,12 @@
 package internal
 
 import (
-	bval "birb/bvalue"
+	"birb/bvalue"
 	"birb/codec"
+	"birb/key"
 	"birb/storage"
+	"birb/txid"
 )
-
-const (
-	PrimaryKeyTag string = "pk"
-)
-
-func IndexKey(ns string, field string, value bval.Value) string {
-	return "idx_" + Key(ns, field, value)
-}
-
-func Key(ns string, field string, value bval.Value) string {
-	return ns + "_" + field + "_" + value.String()
-}
 
 func Find[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key string) (R, bool) {
 	recb, ok := storage.Get(key)
@@ -27,4 +17,38 @@ func Find[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key stri
 
 	rec, _ := codec.Decode(recb)
 	return rec, true
+}
+
+func FindCommitedLatestVersion[R any](
+	storage storage.Storage[[]byte],
+	codec codec.Codec[R],
+	pk bvalue.Value,
+	id txid.ID,
+	ns string,
+) (R, bool) {
+	baseKey := "rec_" + ns + "_pk_" + pk.String() + "_com"
+
+	rng := storage.Range(baseKey)
+	var latestXmin txid.ID
+	var latestKey string
+	for rng.Next() {
+		keyRaw, _ := rng.Value()
+
+		key, err := key.FromString(keyRaw)
+		if err != nil {
+			panic("incorrect storage key format")
+		}
+
+		if !key.Xmin.Less(latestXmin) && key.Xmin.Less(id) {
+			latestXmin = key.Xmin
+			latestKey = keyRaw
+		}
+	}
+
+	if latestKey == "" {
+		var r R
+		return r, false
+	}
+
+	return Find(storage, codec, latestKey)
 }
