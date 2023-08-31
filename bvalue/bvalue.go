@@ -1,4 +1,5 @@
 // Provides types for binary value representation
+// TODO deprecate? why is it even used lol
 package bvalue
 
 import "strconv"

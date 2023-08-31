@@ -1,4 +1,5 @@
 /*
+// TODO CHANGE THIS!
 # Data layout patterns.
 
 	[key] = [value]	- key for a value
@@ -8,26 +9,26 @@
 
 Suppose we have "users" namespace:
 
-	[ptr_users_pk_1] = [*rec_users_pk_1_com_xmin_123]
-	[ptr_users_pk_1_com_xmin_123] = [record value]
+	[ptr_users_pk_1] = [*rec_users_pk_1_com_123_000]
+	[rec_users_pk_1_com_123_000] = [record value]
 
-record key "rec_users_pk_1_com_xmin_123" is a current version of the record,
+record key "rec_users_pk_1_com_123_000" is a current version of the record,
 and the latest committed version. "ptr_users_pk_1" is a pointer key to
 a record key.
 
 # Transaction key pattern.
 
-	{val type}_{ns}_{idx field name}_{idx field val}_{tx state}_xmin_{xmin val}_xmax_{xmax val}
+	{key type}_{ns}_{idx field name}_{idx field val}_{tx state}_{xmin val}_{xmax val}
 
 where
 
-  - {val type} is {rec|ptr|idx} (record|pointer|index)
+  - {key type} is {rec|ptr|idx} (record|pointer|index)
   - {tx state} is {unc|com} (uncommitted|committed),
-  - {xmin val} and {xmax val} are ordered 64-bit integers.
+  - {xmin val} and {xmax val} are ordered 64-bit integers, see [txid.ID].
 
 Example key:
 
-	rec_users_pk_12_com_xmin_1234567890_xmax_9876543210
+	rec_users_pk_12_com_1234567890_9876543210
 
 which means "an *committed* record of *users* namespace which can be found by
 *primary key* *12* and valid for all transactions started after xmin 1234567890
@@ -36,11 +37,11 @@ and before xmax 9876543210".
 If during a transaction with txid X a record is inserted, the key for that
 record will look like this:
 
-	rec_users_pk_12_unc_xmin_X_xmax_X
+	rec_users_pk_12_unc_X_X
 
 notice equality of xmin and xmax values. This makes the record visible for
 current transaction (xmin and xmax are less than current tx's txid, with "less"
-defined as [TxID.Less]), but invisible to other transactions.
+defined as [txid.ID.Less]), but invisible to other transactions.
 
 The idea of such transaction model is stolen from PostgreSQL :P
 */
@@ -51,10 +52,11 @@ import (
 	"birb/bvalue"
 	"birb/codec"
 	"birb/internal"
+	"birb/key"
 	"birb/storage"
-	"strconv"
-	"strings"
-	"time"
+	"birb/txid"
+
+	"github.com/samber/mo"
 )
 
 var (
@@ -64,15 +66,15 @@ var (
 
 type TxStore[R any] struct {
 	ns      string
-	startTs time.Time
+	id      txid.ID
 	storage storage.Storage[[]byte]
 	codec   codec.Codec[R]
 }
 
-func NewTx[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], now time.Time) TxStore[R] {
+func NewTx[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], id txid.ID) TxStore[R] {
 	return TxStore[R]{
 		ns:      ns,
-		startTs: now,
+		id:      id,
 		storage: stg,
 		codec:   codec,
 	}
@@ -80,30 +82,15 @@ func NewTx[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], 
 
 // Finds a record only that which was created before tx started
 func (tx *TxStore[R]) Find(pk bvalue.Value) (R, bool) {
-	baseKey := internal.Key(tx.ns, internal.PrimaryKeyTag, pk)
-	rng := tx.storage.Range(baseKey)
-	var mostRecentTs int64
-	var mostRecentKey string
-	for rng.Next() {
-		k, _ := rng.Value()
-		tsRaw, _ := strings.CutPrefix(k, baseKey+"_xmin_")
-		ts, err := strconv.ParseInt(tsRaw, 10, 64)
-		if err != nil {
-			panic("incorrect storage key: must contain a valid timestamp")
-		}
-
-		if ts > mostRecentTs && ts <= tx.startTs.Unix() {
-			mostRecentTs = ts
-			mostRecentKey = k
-		}
+	unckey := key.Record(tx.ns, "pk", pk, "unc", tx.id, mo.None[txid.ID]())
+	// try to find uncommitted record made by current tx
+	if rec, ok := internal.Find(tx.storage, tx.codec, unckey.String()); ok {
+		return rec, true
 	}
 
-	if mostRecentKey == "" {
-		var r R
-		return r, false
-	}
-
-	return internal.Find(tx.storage, tx.codec, mostRecentKey)
+	// otherwise try to find committed latest version of the record
+	_, rec, ok := internal.FindCommitedLatestVersion(tx.storage, tx.codec, pk, tx.id, tx.ns)
+	return rec, ok
 }
 
 func (*TxStore[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
@@ -111,18 +98,53 @@ func (*TxStore[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
 }
 
 // XXX GOLD https://devcenter.heroku.com/articles/postgresql-concurrency
-func (*TxStore[R]) Upsert(pk bvalue.Value, record R) {
-	panic("unimplemented")
+func (tx *TxStore[R]) Upsert(pk bvalue.Value, record R) {
+	key := key.Record(tx.ns, "pk", pk, "unc", tx.id, mo.None[txid.ID]())
+	recb, _ := tx.codec.Encode(record)
+	tx.storage.Set(key.String(), recb)
 }
 
-func (*TxStore[R]) Delete(pk bvalue.Value) {
-	panic("unimplemented")
+func (tx *TxStore[R]) Delete(pk bvalue.Value) {
+	// TODO :
+	// 1. set xmax=tx.id for the record
+	// 2. what to do for xmin==tx.id==xmax?
+
+	// TODO a
+	// change idea of key pointer to just a commited row?
+	// if deletion is on 'com' row, then create new 'unc' row with xmax=tx.id
+	// if deletion is on 'unc' row, just mark it with xmax=tx.id
+
+	unckey := key.Record(tx.ns, "pk", pk, "unc", tx.id, mo.None[txid.ID]())
+	// if we are deleting uncommited record, just set its xmax == tx.id
+	if recb, ok := tx.storage.Get(unckey.String()); ok {
+		tx.storage.Del(unckey.String())
+		unckey.Xmax = tx.id
+		tx.storage.Set(unckey.String(), recb)
+		return
+	}
+
+	// otherwise, make an unc copy of a committed record & mark xmax=tx.id
+	// TODO optimize double encoding-decoding
+	key, rec, ok := internal.FindCommitedLatestVersion(
+		tx.storage, tx.codec, pk, tx.id, tx.ns)
+	if ok {
+		key.Xmax = tx.id
+		recb, _ := tx.codec.Encode(rec)
+		tx.storage.Set(unckey.String(), recb)
+	}
 }
 
-func (*TxStore[R]) Commit() error {
+func (tx *TxStore[R]) Commit() error {
+	// TODO :
+	// 1. commit all rec_unc records with xmin == tx.id (??? && xmax == tx.id ???)
+	// save all 'unc' tx with 'txstate' in key being at the beginning (rec_unc_users_...)?
+	// mb 'rec_unc_{xmin}_users_pk_1_{xmax}'
+	// and 'rec_com_users_pk_1_{xmin}_{xmax}'
 	panic("not implemented")
 }
 
 func (*TxStore[R]) Rollback() {
+	// TODO :
+	// 1. delete all rec_unc with xmin == tx.id && xmax == tx.id
 	panic("not implemented")
 }

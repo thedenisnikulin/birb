@@ -5,6 +5,8 @@ import (
 	bval "birb/bvalue"
 	"birb/codec"
 	"birb/internal"
+	"birb/key"
+	k "birb/key"
 	"birb/storage"
 	"errors"
 	"fmt"
@@ -38,23 +40,23 @@ func NewNamedStore[R any](
 
 // TODO add to index as well
 func (s *NamedStore[R]) Upsert(pk bval.Value, record R) {
-	key := internal.Key(s.name, internal.PrimaryKeyTag, pk)
+	key := key.RecordKey(s.name, "pk", pk)
 	recb, _ := s.codec.Encode(record)
 	s.storage.Set(key, recb)
 }
 
 func (s *NamedStore[R]) Delete(pk bval.Value) {
-	key := internal.Key(s.name, internal.PrimaryKeyTag, pk)
+	key := key.RecordKey(s.name, "pk", pk)
 	s.storage.Del(key)
 }
 
 func (s *NamedStore[R]) Find(pk bval.Value) (R, bool) {
-	key := internal.Key(s.name, internal.PrimaryKeyTag, pk)
+	key := key.RecordKey(s.name, "pk", pk)
 	return internal.Find(s.storage, s.codec, key)
 }
 
 func (s *NamedStore[R]) FindByIndex(name string, value bval.Value) (R, bool) {
-	idxKey := internal.IndexKey(s.name, name, value)
+	idxKey := key.IndexKey(s.name, name, value)
 	recordKey, ok := s.storage.Get(idxKey)
 	if !ok {
 		var r R
@@ -65,7 +67,7 @@ func (s *NamedStore[R]) FindByIndex(name string, value bval.Value) (R, bool) {
 }
 
 func (s *NamedStore[R]) AddIndex(fieldName string) error {
-	rng := s.storage.Range(s.name)
+	rng := s.storage.Range("rec_" + s.name)
 	for rng.Next() {
 		key, recb := rng.Value()
 
@@ -92,7 +94,7 @@ func (s *NamedStore[R]) AddIndex(fieldName string) error {
 		}
 
 		// create index: index is basically "a pointer" to the PK key
-		indexKey := internal.IndexKey(s.name, fieldName, []byte(value))
+		indexKey := k.IndexKey(s.name, fieldName, []byte(value))
 		s.storage.Set(indexKey, bval.Value(key))
 	}
 

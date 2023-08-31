@@ -25,12 +25,13 @@ func FindCommitedLatestVersion[R any](
 	pk bvalue.Value,
 	id txid.ID,
 	ns string,
-) (R, bool) {
+) (key.Key, R, bool) {
 	baseKey := "rec_" + ns + "_pk_" + pk.String() + "_com"
 
 	rng := storage.Range(baseKey)
 	var latestXmin txid.ID
-	var latestKey string
+	var latestKeyRaw string
+	var latestKey key.Key
 	for rng.Next() {
 		keyRaw, _ := rng.Value()
 
@@ -41,14 +42,16 @@ func FindCommitedLatestVersion[R any](
 
 		if !key.Xmin.Less(latestXmin) && key.Xmin.Less(id) {
 			latestXmin = key.Xmin
-			latestKey = keyRaw
+			latestKeyRaw = keyRaw
+			latestKey = key
 		}
 	}
 
-	if latestKey == "" {
+	if latestKeyRaw == "" {
 		var r R
-		return r, false
+		return latestKey, r, false
 	}
 
-	return Find(storage, codec, latestKey)
+	recb, ok := Find(storage, codec, latestKeyRaw)
+	return latestKey, recb, ok
 }

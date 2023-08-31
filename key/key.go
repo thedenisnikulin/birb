@@ -50,6 +50,14 @@ func Record(ns, field string, value bval.Value, txstate string, xmin txid.ID, xm
 	return New("rec", ns, field, value, txstate, xmin, xmax)
 }
 
+func RecordCom(ns, field string, value bval.Value, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
+	return New("rec", ns, field, value, "com", xmin, xmax)
+}
+
+func RecordUnc(ns, field string, value bval.Value, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
+	return New("rec", ns, field, value, "unc", xmin, xmax)
+}
+
 func Pointer(ns, field string, value bval.Value, txstate string, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
 	return New("ptr", ns, field, value, txstate, xmin, xmax)
 }
