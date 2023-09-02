@@ -1,6 +1,9 @@
 package birb
 
-import bval "birb/bvalue"
+import (
+	bval "birb/bvalue"
+	"birb/txid"
+)
 
 type Store[R any] interface {
 	Find(pk bval.Value) (R, bool)
@@ -14,6 +17,6 @@ type Indexer interface {
 }
 
 type Tx interface {
-	Commit() error
+	Commit(end txid.ID) error
 	Rollback()
 }

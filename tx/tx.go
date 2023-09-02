@@ -1,5 +1,5 @@
 /*
-// TODO CHANGE THIS!
+// TODO CHANGE THIS, DEPRECATED!
 # Data layout patterns.
 
 	[key] = [value]	- key for a value
@@ -43,7 +43,14 @@ notice equality of xmin and xmax values. This makes the record visible for
 current transaction (xmin and xmax are less than current tx's txid, with "less"
 defined as [txid.ID.Less]), but invisible to other transactions.
 
+// TODO paste this
+save all 'unc' tx with 'txstate' in key being at the beginning (rec_unc_users_...)?
+mb 'rec_unc_{xmin}_{xmax}_users_pk_1'
+and 'rec_com_users_pk_1_{xmin}_{xmax}'
+
 The idea of such transaction model is stolen from PostgreSQL :P
+PostgreSQL source code, /src/backend/utils/time/tqual.c:155, though
+my implementation is a bit simplified.
 */
 package tx
 
@@ -64,6 +71,9 @@ var (
 	_ birb.Tx         = (*TxStore[any])(nil)
 )
 
+// TODO change idea of key pointer to just a committed row?
+
+// Isolation level is by default "read committed"
 type TxStore[R any] struct {
 	ns      string
 	id      txid.ID
@@ -82,14 +92,15 @@ func NewTx[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], 
 
 // Finds a record only that which was created before tx started
 func (tx *TxStore[R]) Find(pk bvalue.Value) (R, bool) {
-	unckey := key.Record(tx.ns, "pk", pk, "unc", tx.id, mo.None[txid.ID]())
 	// try to find uncommitted record made by current tx
+	// TODO xmax is not necessarily mo.None
+	unckey := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
 	if rec, ok := internal.Find(tx.storage, tx.codec, unckey.String()); ok {
 		return rec, true
 	}
 
 	// otherwise try to find committed latest version of the record
-	_, rec, ok := internal.FindCommitedLatestVersion(tx.storage, tx.codec, pk, tx.id, tx.ns)
+	_, rec, ok := internal.FindLatestCommitted(tx.storage, tx.codec, pk, tx.id, tx.ns)
 	return rec, ok
 }
 
@@ -99,52 +110,81 @@ func (*TxStore[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
 
 // XXX GOLD https://devcenter.heroku.com/articles/postgresql-concurrency
 func (tx *TxStore[R]) Upsert(pk bvalue.Value, record R) {
-	key := key.Record(tx.ns, "pk", pk, "unc", tx.id, mo.None[txid.ID]())
+	key := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
 	recb, _ := tx.codec.Encode(record)
 	tx.storage.Set(key.String(), recb)
 }
 
 func (tx *TxStore[R]) Delete(pk bvalue.Value) {
-	// TODO :
-	// 1. set xmax=tx.id for the record
-	// 2. what to do for xmin==tx.id==xmax?
-
-	// TODO a
-	// change idea of key pointer to just a commited row?
-	// if deletion is on 'com' row, then create new 'unc' row with xmax=tx.id
-	// if deletion is on 'unc' row, just mark it with xmax=tx.id
-
-	unckey := key.Record(tx.ns, "pk", pk, "unc", tx.id, mo.None[txid.ID]())
-	// if we are deleting uncommited record, just set its xmax == tx.id
+	// if we are deleting uncommitted record, just set its xmax == tx.id
+	unckey := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
 	if recb, ok := tx.storage.Get(unckey.String()); ok {
 		tx.storage.Del(unckey.String())
+		unckey.Xmin = tx.id // TEST sure?
 		unckey.Xmax = tx.id
 		tx.storage.Set(unckey.String(), recb)
 		return
 	}
 
 	// otherwise, make an unc copy of a committed record & mark xmax=tx.id
-	// TODO optimize double encoding-decoding
-	key, rec, ok := internal.FindCommitedLatestVersion(
+	// TODO optimize double encoding-decoding prolly
+	comkey, rec, ok := internal.FindLatestCommitted(
 		tx.storage, tx.codec, pk, tx.id, tx.ns)
 	if ok {
-		key.Xmax = tx.id
+		comkey.Xmin = tx.id // TEST sure?
+		comkey.Xmax = tx.id
 		recb, _ := tx.codec.Encode(rec)
 		tx.storage.Set(unckey.String(), recb)
 	}
 }
 
-func (tx *TxStore[R]) Commit() error {
-	// TODO :
-	// 1. commit all rec_unc records with xmin == tx.id (??? && xmax == tx.id ???)
-	// save all 'unc' tx with 'txstate' in key being at the beginning (rec_unc_users_...)?
-	// mb 'rec_unc_{xmin}_users_pk_1_{xmax}'
-	// and 'rec_com_users_pk_1_{xmin}_{xmax}'
-	panic("not implemented")
+// TODO make concurrent
+func (tx *TxStore[R]) Commit(end txid.ID) error {
+	// commit records that were upserted during tx lifetime
+	prefixUpserted := key.PrefixUncSameTx("rec", tx.ns, tx.id, mo.None[txid.ID]())
+	rng := tx.storage.Range(prefixUpserted)
+	for rng.Next() {
+		k, v := rng.Value()
+		unckey, err := key.FromStringUnc(k)
+		if err != nil {
+			panic("converting storage key to key.UncKey: " + err.Error())
+		}
+
+		comkey := unckey.ToCom()
+		comkey.Xmin = end
+		tx.storage.Set(comkey.String(), v)
+	}
+
+	// commit records that were deleted during tx lifetime
+	prefixDeleted := key.PrefixUncSameTx("rec", tx.ns, tx.id, mo.Some(tx.id))
+	rng = tx.storage.Range(prefixDeleted)
+	for rng.Next() {
+		k, v := rng.Value()
+		unckey, err := key.FromStringUnc(k)
+		if err != nil {
+			panic("converting storage key to key.UncKey: " + err.Error())
+		}
+
+		comkey := unckey.ToCom()
+		comkey.Xmax = end
+		tx.storage.Set(comkey.String(), v)
+	}
+
+	return nil
 }
 
-func (*TxStore[R]) Rollback() {
-	// TODO :
-	// 1. delete all rec_unc with xmin == tx.id && xmax == tx.id
-	panic("not implemented")
+func (tx *TxStore[R]) Rollback() {
+	prefixUpserted := key.PrefixUncSameTx("rec", tx.ns, tx.id, mo.None[txid.ID]())
+	rng := tx.storage.Range(prefixUpserted)
+	for rng.Next() {
+		k, _ := rng.Value()
+		tx.storage.Del(k)
+	}
+
+	prefixDeleted := key.PrefixUncSameTx("rec", tx.ns, tx.id, mo.Some(tx.id))
+	rng = tx.storage.Range(prefixDeleted)
+	for rng.Next() {
+		k, _ := rng.Value()
+		tx.storage.Del(k)
+	}
 }
