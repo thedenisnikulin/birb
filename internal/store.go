@@ -19,7 +19,7 @@ func Find[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key stri
 	return rec, true
 }
 
-func FindCommitedLatestVersion[R any](
+func FindLatestCommitted[R any](
 	storage storage.Storage[[]byte],
 	codec codec.Codec[R],
 	pk bvalue.Value,
