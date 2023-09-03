@@ -43,11 +43,6 @@ notice equality of xmin and xmax values. This makes the record visible for
 current transaction (xmin and xmax are less than current tx's txid, with "less"
 defined as [txid.ID.Less]), but invisible to other transactions.
 
-// TODO paste this
-save all 'unc' tx with 'txstate' in key being at the beginning (rec_unc_users_...)?
-mb 'rec_unc_{xmin}_{xmax}_users_pk_1'
-and 'rec_com_users_pk_1_{xmin}_{xmax}'
-
 The idea of such transaction model is stolen from PostgreSQL :P
 PostgreSQL source code, /src/backend/utils/time/tqual.c:155, though
 my implementation is a bit simplified.

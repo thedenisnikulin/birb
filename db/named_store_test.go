@@ -1,9 +1,10 @@
-package relational
+package database
 
 import (
 	bval "birb/bvalue"
 	"birb/codec"
 	"birb/storage"
+	"birb/txid"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,9 +19,10 @@ func TestNamedStore(t *testing.T) {
 	// arrange
 	prefixTreeStorage := storage.NewPrefixTreeStorage[[]byte]()
 	bsonCodec := codec.NewBsonCodec[user]()
-	rel := RelationalStore{prefixTreeStorage}
+	txidIssuer := txid.MxIssuer{}
+	db := Database{prefixTreeStorage, &txidIssuer}
 
-	namedStore, err := Use(&rel, bsonCodec, "users")
+	namedStore, err := Use(&db, bsonCodec, "users")
 	if err != nil {
 		panic(err)
 	}
@@ -54,3 +56,5 @@ func TestNamedStore(t *testing.T) {
 	assert.True(t, okByAgeIdx)
 	assert.Equal(t, u, recByAgeIdx)
 }
+
+func TestTx(t *testing.T) {}

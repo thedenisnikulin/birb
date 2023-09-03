@@ -110,7 +110,7 @@ func Pointer(ns, field string, value bval.Value, txstate string, xmin txid.ID, x
 func FromString(s string) (Key, error) {
 	tokens := strings.Split(s, "_")
 	if len(tokens) != 7 {
-		return Key{}, errors.New("string is not a valid key")
+		return Key{}, errors.New("provided string is not a valid key")
 	}
 
 	switch tokens[0] {
@@ -140,7 +140,7 @@ func FromString(s string) (Key, error) {
 func FromStringUnc(s string) (UncKey, error) {
 	tokens := strings.Split(s, "_")
 	if len(tokens) != 7 {
-		return UncKey{}, errors.New("string is not a valid key")
+		return UncKey{}, errors.New("provided string is not a valid key")
 	}
 
 	switch tokens[0] {

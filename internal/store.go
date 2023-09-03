@@ -22,11 +22,12 @@ func Find[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key stri
 func FindLatestCommitted[R any](
 	storage storage.Storage[[]byte],
 	codec codec.Codec[R],
-	pk bvalue.Value,
+	fieldName string,
+	fieldValue bvalue.Value,
 	id txid.ID,
 	ns string,
 ) (key.Key, R, bool) {
-	baseKey := "rec_" + ns + "_pk_" + pk.String() + "_com"
+	baseKey := "rec_" + ns + "_pk_" + fieldValue.String() + "_com"
 
 	rng := storage.Range(baseKey)
 	var latestXmin txid.ID
@@ -40,7 +41,8 @@ func FindLatestCommitted[R any](
 			panic("incorrect storage key format")
 		}
 
-		if !key.Xmin.Less(latestXmin) && key.Xmin.Less(id) {
+		validIdRange := key.Xmin.Less(id) && id.Less(key.Xmax)
+		if validIdRange && !key.Xmin.Less(latestXmin) {
 			latestXmin = key.Xmin
 			latestKeyRaw = keyRaw
 			latestKey = key
