@@ -39,7 +39,7 @@ func (id ID) Less(rhs ID) bool {
 
 func (id ID) String() string {
 	n := id.Uint64()
-	return strconv.FormatUint(n, 10)
+	return strconv.FormatUint(n, 16)
 }
 
 func FromUint64(n uint64) ID {
@@ -50,7 +50,7 @@ func FromUint64(n uint64) ID {
 }
 
 func FromString(s string) (ID, error) {
-	txidRaw, err := strconv.ParseUint(s, 10, 64)
+	txidRaw, err := strconv.ParseUint(s, 16, 64)
 	if err != nil {
 		return ID{}, err
 	}
