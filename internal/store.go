@@ -30,7 +30,6 @@ func FindLatestCommitted[R any](
 	baseKey := "rec_com_" + ns + "_" + fieldName + "_" + fieldValue.String()
 
 	rng := storage.Range(baseKey)
-	var latestXmin txid.ID
 	var latestKeyRaw string
 	var latestKey key.Key
 	for rng.Next() {
@@ -41,15 +40,19 @@ func FindLatestCommitted[R any](
 			panic("incorrect storage key format")
 		}
 
-		validIdRange := key.Xmin.Less(id) && id.Less(key.Xmax)
-		if validIdRange && !key.Xmin.Less(latestXmin) {
-			latestXmin = key.Xmin
+		validIdRange := key.Xmin.Less(id)
+		if validIdRange && !key.Xmin.Less(latestKey.Xmin) {
 			latestKeyRaw = keyRaw
 			latestKey = key
 		}
 	}
 
 	if latestKeyRaw == "" {
+		var r R
+		return latestKey, r, false
+	}
+
+	if latestKey.Xmax.Less(id) {
 		var r R
 		return latestKey, r, false
 	}
