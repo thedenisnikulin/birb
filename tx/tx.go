@@ -50,7 +50,6 @@ my implementation is a bit simplified.
 package tx
 
 import (
-	"birb"
 	"birb/bvalue"
 	"birb/codec"
 	"birb/internal"
@@ -61,23 +60,24 @@ import (
 	"github.com/samber/mo"
 )
 
-var (
-	_ birb.Store[any] = (*TxStore[any])(nil)
-	_ birb.Tx         = (*TxStore[any])(nil)
-)
+// FIXME import cycle :(
+// var (
+// 	_ birb.Store[any] = (*TxStore[any])(nil)
+// 	_ birb.Tx         = (*TxStore[any])(nil)
+// )
 
 // TODO change idea of key pointer to just a committed row?
 
 // Isolation level is by default "read committed"
-type TxStore[R any] struct {
+type Store[R any] struct {
 	ns      string
 	id      txid.ID
 	storage storage.Storage[[]byte]
 	codec   codec.Codec[R]
 }
 
-func NewTx[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], id txid.ID) TxStore[R] {
-	return TxStore[R]{
+func New[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], id txid.ID) Store[R] {
+	return Store[R]{
 		ns:      ns,
 		id:      id,
 		storage: stg,
@@ -86,31 +86,43 @@ func NewTx[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], 
 }
 
 // Finds a record only that which was created before tx started
-func (tx *TxStore[R]) Find(pk bvalue.Value) (R, bool) {
+func (tx *Store[R]) Find(pk bvalue.Value) (R, bool) {
 	// try to find uncommitted record made by current tx
-	// TODO xmax is not necessarily mo.None
+	// TODO xmax is not necessarily mo.None?
 	unckey := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
-	if rec, ok := internal.Find(tx.storage, tx.codec, unckey.String()); ok {
+	if rec, ok := internal.FindExact(tx.storage, tx.codec, unckey.String()); ok {
 		return rec, true
 	}
 
 	// otherwise try to find committed latest version of the record
-	_, rec, ok := internal.FindLatestCommitted(tx.storage, tx.codec, pk, tx.id, tx.ns)
+	_, rec, ok := internal.FindLatestCommitted(
+		tx.storage, tx.codec, "pk", pk, tx.id, tx.ns)
 	return rec, ok
 }
 
-func (*TxStore[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
+func (*Store[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
 	panic("unimplemented")
 }
 
+// TODO INDICES!
+// key=value: meta_users_indices = name,email
+// more duty on Upsert and Delete (get fields from meta_users_indices and delete
+// records all of indices by them).
+// AddByIndex now adds meta_users_indices field
+
+// TODO use sourcegraph cody?
+
+// TODO future: add different indices support (like reindexer does)
+
 // XXX GOLD https://devcenter.heroku.com/articles/postgresql-concurrency
-func (tx *TxStore[R]) Upsert(pk bvalue.Value, record R) {
+func (tx *Store[R]) Upsert(pk bvalue.Value, record R) {
+	// TODO not mo.None, but txid.Max()?
 	key := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
 	recb, _ := tx.codec.Encode(record)
 	tx.storage.Set(key.String(), recb)
 }
 
-func (tx *TxStore[R]) Delete(pk bvalue.Value) {
+func (tx *Store[R]) Delete(pk bvalue.Value) {
 	// if we are deleting uncommitted record, just set its xmax == tx.id
 	unckey := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
 	if recb, ok := tx.storage.Get(unckey.String()); ok {
@@ -124,8 +136,9 @@ func (tx *TxStore[R]) Delete(pk bvalue.Value) {
 	// otherwise, make an unc copy of a committed record & mark xmax=tx.id
 	// TODO optimize double encoding-decoding prolly
 	comkey, rec, ok := internal.FindLatestCommitted(
-		tx.storage, tx.codec, pk, tx.id, tx.ns)
+		tx.storage, tx.codec, "pk", pk, tx.id, tx.ns)
 	if ok {
+		unckey := comkey.ToUnc()
 		comkey.Xmin = tx.id // TEST sure?
 		comkey.Xmax = tx.id
 		recb, _ := tx.codec.Encode(rec)
@@ -134,7 +147,7 @@ func (tx *TxStore[R]) Delete(pk bvalue.Value) {
 }
 
 // TODO make concurrent
-func (tx *TxStore[R]) Commit(end txid.ID) error {
+func (tx *Store[R]) Commit(end txid.ID) error {
 	// commit records that were upserted during tx lifetime
 	prefixUpserted := key.PrefixUncSameTx("rec", tx.ns, tx.id, mo.None[txid.ID]())
 	rng := tx.storage.Range(prefixUpserted)
@@ -168,7 +181,7 @@ func (tx *TxStore[R]) Commit(end txid.ID) error {
 	return nil
 }
 
-func (tx *TxStore[R]) Rollback() {
+func (tx *Store[R]) Rollback() {
 	prefixUpserted := key.PrefixUncSameTx("rec", tx.ns, tx.id, mo.None[txid.ID]())
 	rng := tx.storage.Range(prefixUpserted)
 	for rng.Next() {

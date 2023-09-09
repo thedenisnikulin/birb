@@ -50,7 +50,7 @@ type UncKey struct {
 	Key
 }
 
-func (k Key) ToCom() Key {
+func (k UncKey) ToCom() Key {
 	return CommittedRec(k.Ns, k.FieldName, k.FieldValue, k.Xmin, mo.Some(k.Xmax))
 }
 

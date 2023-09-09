@@ -8,7 +8,7 @@ import (
 	"birb/txid"
 )
 
-func Find[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key string) (R, bool) {
+func FindExact[R any](storage storage.Storage[[]byte], codec codec.Codec[R], key string) (R, bool) {
 	recb, ok := storage.Get(key)
 	if !ok {
 		var r R
@@ -27,7 +27,7 @@ func FindLatestCommitted[R any](
 	id txid.ID,
 	ns string,
 ) (key.Key, R, bool) {
-	baseKey := "rec_" + ns + "_pk_" + fieldValue.String() + "_com"
+	baseKey := "rec_com_" + ns + "_" + fieldName + "_" + fieldValue.String()
 
 	rng := storage.Range(baseKey)
 	var latestXmin txid.ID
@@ -54,6 +54,6 @@ func FindLatestCommitted[R any](
 		return latestKey, r, false
 	}
 
-	recb, ok := Find(storage, codec, latestKeyRaw)
+	recb, ok := FindExact(storage, codec, latestKeyRaw)
 	return latestKey, recb, ok
 }

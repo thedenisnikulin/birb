@@ -1,4 +1,4 @@
-package database
+package collection
 
 import (
 	bval "birb/bvalue"
@@ -15,14 +15,13 @@ type user struct {
 	Age  int    `bson:"age"`
 }
 
-func TestNamedStore(t *testing.T) {
+func TestCollection(t *testing.T) {
 	// arrange
-	prefixTreeStorage := storage.NewPrefixTreeStorage[[]byte]()
-	bsonCodec := codec.NewBsonCodec[user]()
-	txidIssuer := txid.MxIssuer{}
-	db := Database{prefixTreeStorage, &txidIssuer}
+	stg := storage.NewPrefixTreeStorage[[]byte]()
+	codec := codec.NewBsonCodec[user]()
+	txidiss := txid.MxIssuer{}
 
-	namedStore, err := Use(&db, bsonCodec, "users")
+	namedStore, err := New("users", stg, codec, &txidiss)
 	if err != nil {
 		panic(err)
 	}
@@ -42,7 +41,7 @@ func TestNamedStore(t *testing.T) {
 	namedStore.AddIndex("age")
 	recByAgeIdx, okByAgeIdx := namedStore.FindByIndex("age", bval.FromInt(21))
 
-	for k, v := range prefixTreeStorage.ToMap() {
+	for k, v := range stg.ToMap() {
 		t.Logf("[%s]\t= [%s]", k, string(v))
 	}
 
