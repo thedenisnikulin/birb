@@ -57,3 +57,15 @@ func FromString(s string) (ID, error) {
 
 	return FromUint64(txidRaw), nil
 }
+
+func New(t time.Time, xid uint32) ID {
+	return ID{epoch: uint32(t.Unix()), xid: xid}
+}
+
+func Max() ID {
+	return ID{0xFFFFFFFF, 0xFFFFFFFF}
+}
+
+func Min() ID {
+	return ID{}
+}
