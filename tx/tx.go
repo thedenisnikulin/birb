@@ -116,8 +116,7 @@ func (*Store[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
 
 // XXX GOLD https://devcenter.heroku.com/articles/postgresql-concurrency
 func (tx *Store[R]) Upsert(pk bvalue.Value, record R) {
-	// TODO not mo.None, but txid.Max()?
-	key := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
+	key := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.Some(txid.Max()))
 	recb, _ := tx.codec.Encode(record)
 	tx.storage.Set(key.String(), recb)
 }
@@ -127,7 +126,7 @@ func (tx *Store[R]) Delete(pk bvalue.Value) {
 	unckey := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
 	if recb, ok := tx.storage.Get(unckey.String()); ok {
 		tx.storage.Del(unckey.String())
-		unckey.Xmin = tx.id // TEST sure?
+		unckey.Xmin = tx.id
 		unckey.Xmax = tx.id
 		tx.storage.Set(unckey.String(), recb)
 		return
@@ -139,8 +138,8 @@ func (tx *Store[R]) Delete(pk bvalue.Value) {
 		tx.storage, tx.codec, "pk", pk, tx.id, tx.ns)
 	if ok {
 		unckey := comkey.ToUnc()
-		comkey.Xmin = tx.id // TEST sure?
-		comkey.Xmax = tx.id
+		unckey.Xmin = tx.id
+		unckey.Xmax = tx.id
 		recb, _ := tx.codec.Encode(rec)
 		tx.storage.Set(unckey.String(), recb)
 	}
@@ -149,7 +148,7 @@ func (tx *Store[R]) Delete(pk bvalue.Value) {
 // TODO make concurrent
 func (tx *Store[R]) Commit(end txid.ID) error {
 	// commit records that were upserted during tx lifetime
-	prefixUpserted := key.PrefixUncSameTx("rec", tx.ns, tx.id, mo.None[txid.ID]())
+	prefixUpserted := key.PrefixUncSameTx("rec", tx.ns, tx.id, mo.Some(txid.Max()))
 	rng := tx.storage.Range(prefixUpserted)
 	for rng.Next() {
 		k, v := rng.Value()

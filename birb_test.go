@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func arrange() *collection.Store[product] {
+func arrange() (*collection.Store[product], storage.Storage[[]byte]) {
 	stg := storage.NewPrefixTreeStorage[[]byte]()
 	codec := codec.NewBsonCodec[product]()
 	txiss := txid.MxIssuer{}
@@ -23,7 +23,15 @@ func arrange() *collection.Store[product] {
 		panic(err)
 	}
 
-	return store
+	return store, stg
+}
+
+func debugStg(t *testing.T, stg storage.Storage[[]byte]) {
+	c := codec.NewBsonCodec[product]()
+	for k, v := range stg.ToMap() {
+		v, _ := c.Decode(v)
+		t.Logf("[%s]: %+v", k, v)
+	}
 }
 
 type product struct {
@@ -32,21 +40,21 @@ type product struct {
 }
 
 // TODO PLAN
-// 1. add tests for all TX functionality
-// 2. implement indices for tx
+// - [x] add tests for all TX functionality (not all though but sufficient)
+// - [ ] implement indices for tx
+// - [ ] dead rows cleaning?
 
 func TestTxRollback(t *testing.T) {
 	// arrange
-	store := arrange()
+	store, _ := arrange()
 	id := bvalue.FromInt(12)
 
 	// act
 
 	store.Upsert(id, product{"чайник", 1000})
 
-	store.Tx(func(tx tx.Store[product]) error {
+	_ = store.Tx(func(tx tx.Store[product]) error {
 		tx.Upsert(id, product{"сковорода", 5000})
-		//txn.Delete(id)
 		return errors.New("damn")
 	})
 
@@ -54,6 +62,34 @@ func TestTxRollback(t *testing.T) {
 
 	// assert
 	assert.True(t, ok)
-	assert.Equal(t, p.Title, "чайник")
-	assert.Equal(t, p.Price, 1000)
+	assert.Equal(t, "чайник", p.Title)
+	assert.Equal(t, 1000, p.Price)
+}
+
+func TestCommit(t *testing.T) {
+	// arrange
+	store, stg := arrange()
+	id12 := bvalue.FromInt(12)
+	id48 := bvalue.FromInt(48)
+
+	// act
+	store.Upsert(id12, product{"сковорода", 5000})
+	store.Upsert(id48, product{"чайник", 1000})
+
+	store.Tx(func(tx tx.Store[product]) error {
+		tx.Upsert(id12, product{"сковородочка", 4999})
+		tx.Delete(id48)
+		return nil
+	})
+
+	pan, panOk := store.Find(id12)
+	_, kettleOk := store.Find(id48)
+
+	// assert
+	debugStg(t, stg)
+
+	assert.True(t, panOk)
+	assert.Equal(t, product{"сковородочка", 4999}, pan)
+
+	assert.False(t, kettleOk)
 }
