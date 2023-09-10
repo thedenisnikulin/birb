@@ -22,25 +22,23 @@ import (
 // 	_ birb.Indexer    = (*NamedStore[any])(nil)
 // )
 
-// TODO rename to collection.go?
 // TODO paste this
 // save all 'unc' tx with 'txstate' in key being at the beginning (rec_unc_users_...)?
 // mb 'rec_unc_{xmin}_{xmax}_users_pk_1'
 // and 'rec_com_users_pk_1_{xmin}_{xmax}'
 
-// TODO each function may use transaction
 type Store[R any] struct {
 	name    string
 	storage storage.Storage[[]byte]
 	codec   codec.Codec[R]
-	txidiss *txid.MxIssuer
+	txidiss txid.Issuer
 }
 
 func New[R any](
 	ns string,
 	storage storage.Storage[[]byte],
 	codec codec.Codec[R],
-	txidIssuer *txid.MxIssuer,
+	txidIssuer txid.Issuer,
 ) (*Store[R], error) {
 	var val R
 	if _, err := codec.Encode(val); err != nil {

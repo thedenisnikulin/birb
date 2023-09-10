@@ -19,7 +19,7 @@ func TestCollection(t *testing.T) {
 	// arrange
 	stg := storage.NewPrefixTreeStorage[[]byte]()
 	codec := codec.NewBsonCodec[user]()
-	txidiss := txid.MxIssuer{}
+	txidiss := txid.NewAtomicIssuer()
 
 	namedStore, err := New("users", stg, codec, &txidiss)
 	if err != nil {

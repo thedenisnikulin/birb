@@ -9,10 +9,10 @@ import (
 
 type Database struct {
 	storage    storage.Storage[[]byte]
-	txidIssuer *txid.MxIssuer
+	txidIssuer txid.Issuer
 }
 
-func NewDatabase(stg storage.Storage[[]byte], txidiss *txid.MxIssuer) Database {
+func NewDatabase(stg storage.Storage[[]byte], txidiss txid.Issuer) Database {
 	return Database{stg, txidiss}
 }
 

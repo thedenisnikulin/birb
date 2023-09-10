@@ -16,7 +16,7 @@ import (
 func arrange() (*collection.Store[product], storage.Storage[[]byte]) {
 	stg := storage.NewPrefixTreeStorage[[]byte]()
 	codec := codec.NewBsonCodec[product]()
-	txiss := txid.MxIssuer{}
+	txiss := txid.NewAtomicIssuer()
 	database := NewDatabase(stg, &txiss)
 	store, err := UseCollection(&database, codec, "products")
 	if err != nil {
@@ -43,6 +43,7 @@ type product struct {
 // - [x] add tests for all TX functionality (not all though but sufficient)
 // - [ ] implement indices for tx
 // - [ ] dead rows cleaning?
+// - [ ] raft?
 
 func TestTxRollback(t *testing.T) {
 	// arrange
@@ -50,7 +51,6 @@ func TestTxRollback(t *testing.T) {
 	id := bvalue.FromInt(12)
 
 	// act
-
 	store.Upsert(id, product{"чайник", 1000})
 
 	_ = store.Tx(func(tx tx.Store[product]) error {

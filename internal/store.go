@@ -40,8 +40,7 @@ func FindLatestCommitted[R any](
 			panic("incorrect storage key format")
 		}
 
-		validIdRange := key.Xmin.Less(id)
-		if validIdRange && !key.Xmin.Less(latestKey.Xmin) {
+		if key.Xmin.Less(id) && latestKey.Xmin.Less(key.Xmin) {
 			latestKeyRaw = keyRaw
 			latestKey = key
 		}
