@@ -1,6 +1,8 @@
 package lsm
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,28 +10,26 @@ import (
 
 func TestBlockEntry(t *testing.T) {
 	// arrange
-	k := []byte("hello")
-	v := []byte("world")
+	entry := BlockEntry{key: []byte("hello"), value: []byte("world")}
 
 	// act
-	entry := NewBlockEntry(k, v)
-	parsedK, parsedV := entry.KeyValue()
+	bytes := entry.Bytes()
+	parsedEntry := BlockEntryFromBytes(bytes)
 
 	// assert
-	assert.Equal(t, k, parsedK)
-	assert.Equal(t, v, parsedV)
+	assert.Equal(t, entry.key, parsedEntry.key)
+	assert.Equal(t, entry.value, parsedEntry.value)
 }
 
 func TestBlockEntryEmptyValue(t *testing.T) {
 	// arrange
-	k := []byte("hello")
-	v := []byte("")
+	entry := BlockEntry{key: []byte("hello"), value: []byte("")}
 
 	// act
-	entry := NewBlockEntry(k, v)
-	parsedK, parsedV := entry.KeyValue()
+	bytes := entry.Bytes()
+	parsedEntry := BlockEntryFromBytes(bytes)
 
 	// assert
-	assert.Equal(t, k, parsedK)
-	assert.Equal(t, v, parsedV)
+	assert.Equal(t, entry.key, parsedEntry.key)
+	assert.Equal(t, entry.value, parsedEntry.value)
 }
