@@ -50,7 +50,7 @@ func New[R any](
 // TODO add to index as well
 func (s *Store[R]) Upsert(pk bval.Value, record R) {
 	id := s.txidiss.Issue()
-	key := key.CommittedRec(s.name, "pk", pk, id, mo.Some(txid.Max()))
+	key := key.ComRec(s.name, "pk", pk, id, mo.Some(txid.Max()))
 	recb, _ := s.codec.Encode(record)
 	s.storage.Set(key.String(), recb)
 }
@@ -78,7 +78,7 @@ func (s *Store[R]) Find(pk bval.Value) (R, bool) {
 // FIXME this method was abandoned, needs rework
 func (s *Store[R]) FindByIndex(name string, value bval.Value) (R, bool) {
 	id := s.txidiss.Issue()
-	idxKey := key.CommittedRec(s.name, name, value, id, mo.None[txid.ID]())
+	idxKey := key.ComRec(s.name, name, value, id, mo.None[txid.ID]())
 	recordKey, ok := s.storage.Get(idxKey.String())
 	if !ok {
 		var r R
@@ -117,7 +117,7 @@ func (s *Store[R]) AddIndex(fieldName string) error {
 		}
 
 		// create index: index is basically "a pointer" to the PK key
-		indexKey := k.Index(s.name, fieldName, []byte(value), "", txid.ID{}, mo.None[txid.ID]())
+		indexKey := k.Idx(s.name, fieldName, []byte(value), "", txid.ID{}, mo.None[txid.ID]())
 		s.storage.Set(indexKey.String(), bval.Value(key))
 	}
 

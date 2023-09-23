@@ -89,7 +89,7 @@ func New[R any](ns string, stg storage.Storage[[]byte], codec codec.Codec[R], id
 func (tx *Store[R]) Find(pk bvalue.Value) (R, bool) {
 	// try to find uncommitted record made by current tx
 	// TODO xmax is not necessarily mo.None?
-	unckey := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
+	unckey := key.UncRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
 	if rec, ok := internal.FindExact(tx.storage, tx.codec, unckey.String()); ok {
 		return rec, true
 	}
@@ -116,14 +116,14 @@ func (*Store[R]) FindByIndex(name string, value bvalue.Value) (R, bool) {
 
 // XXX GOLD https://devcenter.heroku.com/articles/postgresql-concurrency
 func (tx *Store[R]) Upsert(pk bvalue.Value, record R) {
-	key := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.Some(txid.Max()))
+	key := key.UncRec(tx.ns, "pk", pk, tx.id, mo.Some(txid.Max()))
 	recb, _ := tx.codec.Encode(record)
 	tx.storage.Set(key.String(), recb)
 }
 
 func (tx *Store[R]) Delete(pk bvalue.Value) {
 	// if we are deleting uncommitted record, just set its xmax == tx.id
-	unckey := key.UncommittedRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
+	unckey := key.UncRec(tx.ns, "pk", pk, tx.id, mo.None[txid.ID]())
 	if recb, ok := tx.storage.Get(unckey.String()); ok {
 		tx.storage.Del(unckey.String())
 		unckey.Xmin = tx.id

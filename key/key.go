@@ -32,7 +32,7 @@ type Key struct {
 }
 
 func (k Key) ToUnc() UncKey {
-	return UncommittedRec(k.Ns, k.FieldName, k.FieldValue, k.Xmin, mo.Some(k.Xmax))
+	return UncRec(k.Ns, k.FieldName, k.FieldValue, k.Xmin, mo.Some(k.Xmax))
 }
 
 func (k Key) String() string {
@@ -51,7 +51,7 @@ type UncKey struct {
 }
 
 func (k UncKey) ToCom() Key {
-	return CommittedRec(k.Ns, k.FieldName, k.FieldValue, k.Xmin, mo.Some(k.Xmax))
+	return ComRec(k.Ns, k.FieldName, k.FieldValue, k.Xmin, mo.Some(k.Xmax))
 }
 
 func (k UncKey) String() string {
@@ -87,24 +87,30 @@ func new(ktype, ns, field string, value bval.Value, txstate string, xmin txid.ID
 	}
 }
 
+// TODO INDEXES HERE
+// for committed indexes, just use ptrs [idx_com_users_name_den] (notice no tx info (or need it?)) = [rec_com_users_pk_12_1_1]
+// for uncommitted indexes, use also ptrs but uncommitted [idx_unc_1_1_users_name_den] = [rec_unc_1_1_users_pk_12]
+// uncommitted indexes are FULLY IGNORED AND NOT KNOWN for collection.Store, they are only updated and used by tx.Store
+// может нахуй без индексов сделать tx.Store? нахуй они нужны вообще
+
 func newUnc(ktype, ns, field string, value bval.Value, txstate string, xmin txid.ID, xmax mo.Option[txid.ID]) UncKey {
 	return UncKey{new(ktype, ns, field, value, txstate, xmin, xmax)}
 }
 
-func Index(ns, field string, value bval.Value, txstate string, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
+func Idx(ns, field string, value bval.Value, txstate string, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
 	return new("idx", ns, field, value, txstate, xmin, xmax)
 }
 
-func CommittedRec(ns, field string, value bval.Value, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
+func Ptr(ns, field string, value bval.Value, txstate string, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
+	return new("ptr", ns, field, value, txstate, xmin, xmax)
+}
+
+func ComRec(ns, field string, value bval.Value, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
 	return new("rec", ns, field, value, "com", xmin, xmax)
 }
 
-func UncommittedRec(ns, field string, value bval.Value, xmin txid.ID, xmax mo.Option[txid.ID]) UncKey {
+func UncRec(ns, field string, value bval.Value, xmin txid.ID, xmax mo.Option[txid.ID]) UncKey {
 	return newUnc("rec", ns, field, value, "unc", xmin, xmax)
-}
-
-func Pointer(ns, field string, value bval.Value, txstate string, xmin txid.ID, xmax mo.Option[txid.ID]) Key {
-	return new("ptr", ns, field, value, txstate, xmin, xmax)
 }
 
 func FromString(s string) (Key, error) {
