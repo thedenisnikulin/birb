@@ -10,11 +10,11 @@ import (
 
 func TestBlockEntry(t *testing.T) {
 	// arrange
-	entry := BlockEntry{key: []byte("hello"), value: []byte("world")}
+	entry := Entry{key: []byte("hello"), value: []byte("world")}
 
 	// act
 	bytes := entry.Bytes()
-	parsedEntry := BlockEntryFromBytes(bytes)
+	parsedEntry := EntryFromBytes(bytes)
 
 	// assert
 	assert.Equal(t, entry.key, parsedEntry.key)
@@ -23,11 +23,11 @@ func TestBlockEntry(t *testing.T) {
 
 func TestBlockEntryEmptyValue(t *testing.T) {
 	// arrange
-	entry := BlockEntry{key: []byte("hello"), value: []byte("")}
+	entry := Entry{key: []byte("hello"), value: []byte("")}
 
 	// act
 	bytes := entry.Bytes()
-	parsedEntry := BlockEntryFromBytes(bytes)
+	parsedEntry := EntryFromBytes(bytes)
 
 	// assert
 	assert.Equal(t, entry.key, parsedEntry.key)

@@ -3,36 +3,84 @@ package lsm
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"io"
 	"math"
-	"os"
 	"slices"
 )
 
-type BlockLazy struct {
-	file  *os.File
-	index map[string]BlockEntryIndexValue
+// Block is lazy, which means only block entry index is loaded into memory,
+// entries are accessed on request.
+type Block struct {
+	file  *io.SectionReader
+	index EntryIndex // TODO make it sparse? (not every entry in index)
 }
 
-type BlockEntryIndexValue struct {
+func BlockFromBytes(r *io.SectionReader) (Block, error) {
+	metaBuf := make([]byte, MetaSize)
+	_, err := r.ReadAt(metaBuf, r.Size()-MetaSize)
+	if err != nil {
+		return Block{}, err
+	}
+
+	meta, err := MetaFromBytes(metaBuf)
+	if err != nil {
+		return Block{}, err
+	}
+
+	index := make(EntryIndex, 0, meta.indexLen/4) // each entry is 4 bytes long
+	endoff := meta.indexOffset + meta.indexLen
+	for off := meta.indexOffset; off < endoff; off = +4 {
+		buf := [4]byte{}
+		_, err := r.ReadAt(buf[:], int64(off))
+		if err != nil {
+			return Block{}, err
+		}
+
+		idxval, err := EntryIndexValueFromBytes(buf[:])
+		if err != nil {
+			return Block{}, err
+		}
+
+		index = append(index, &idxval)
+	}
+
+	return Block{r, index}, nil
+}
+
+type EntryIndex []*EntryIndexValue
+
+func EntryIndexValueFromBytes(buf []byte) (idxval EntryIndexValue, err error) {
+	if len(buf) < 4 {
+		return EntryIndexValue{}, fmt.Errorf("invalid entry index value length")
+	}
+
+	off := binary.LittleEndian.Uint16(buf)
+	len := binary.LittleEndian.Uint16(buf[2:])
+	return EntryIndexValue{offset: off, len: len}, nil
+}
+
+type EntryIndexValue struct {
 	offset uint16
 	len    uint16
+	r      *io.SectionReader
 }
 
 // TODO deprecate in favor of BlockLazy
-// on disk Block representation:
+// on disk DeprecatedBlock representation:
 // ---------------------------------------------------------------------
 // |          data         |          offsets          |      meta     |
 // |-----------------------|---------------------------|---------------|
 // |entry|entry|entry|entry|offset|offset|offset|offset|num_of_elements|
 // ---------------------------------------------------------------------
 // TODO add bloom filter
-type Block struct {
-	entries []BlockEntry
+type DeprecatedBlock struct {
+	entries []Entry
 }
 
-func NewBlock(maxSize int) Block {
-	return Block{
-		entries: make([]BlockEntry, 0),
+func NewBlock(maxSize int) DeprecatedBlock {
+	return DeprecatedBlock{
+		entries: make([]Entry, 0),
 	}
 }
 
@@ -45,33 +93,33 @@ func NewBlock(maxSize int) Block {
 // }
 
 // ???
-func (Block) Checksum() []byte {
+func (DeprecatedBlock) Checksum() []byte {
 	panic("not implemented")
 }
 
-func (Block) Bytes() []byte {
+func (DeprecatedBlock) Bytes() []byte {
 	panic("not implemented")
 }
 
-func BlockFromBytes(b []byte) (Block, error) {
+func DeprecatedBlockFromBytes(b []byte) (DeprecatedBlock, error) {
 	panic("not implemented")
 }
 
 type BlockMeta struct {
 }
 
-// on disk BlockEntry representation:
+// on disk Entry representation:
 // -----------------------------------------------------------------------
 // |                           Entry #1                            | ... |
 // -----------------------------------------------------------------------
 // | key_len (2B) | key (keylen) | value_len (2B) | value (varlen) | ... |
 // -----------------------------------------------------------------------
-type BlockEntry struct {
+type Entry struct {
 	key   []byte
 	value []byte
 }
 
-func (entry BlockEntry) Bytes() []byte {
+func (entry Entry) Bytes() []byte {
 	if len(entry.key) > math.MaxUint16 || len(entry.value) > math.MaxUint16 {
 		panic("block entry key or value size is larger than max(uint16)")
 	}
@@ -94,7 +142,7 @@ func (entry BlockEntry) Bytes() []byte {
 	return bytes
 }
 
-func BlockEntryFromBytes(entry []byte) BlockEntry {
+func EntryFromBytes(entry []byte) Entry {
 	var keyOffset uint16 = 0
 	keyLen := binary.LittleEndian.Uint16(entry[keyOffset:2])
 	start := 2 + keyOffset
@@ -105,11 +153,11 @@ func BlockEntryFromBytes(entry []byte) BlockEntry {
 	start = 2 + valOffset
 	val := []byte(entry[start : start+valLen])
 
-	return BlockEntry{key: key, value: val}
+	return Entry{key: key, value: val}
 }
 
 type BlockIter struct {
-	block  Block
+	block  DeprecatedBlock
 	offset int
 }
 
@@ -123,7 +171,7 @@ func (it *BlockIter) SeekToFirst() {
 
 func (it *BlockIter) SeekToKey(key []byte) bool {
 	offset, found := slices.BinarySearchFunc(it.block.entries, key,
-		func(entry BlockEntry, target []byte) int {
+		func(entry Entry, target []byte) int {
 			return bytes.Compare(entry.key, target)
 		})
 
@@ -143,7 +191,7 @@ func (it *BlockIter) Next() bool {
 	return true
 }
 
-func (it BlockIter) Entry() BlockEntry {
+func (it BlockIter) Entry() Entry {
 	if it.offset >= len(it.block.entries) {
 		panic("out of bounds")
 	}
@@ -163,4 +211,21 @@ func keyFromBytes(b []byte) []byte {
 	keylen := bytesToUint16(b[:2])
 	b = b[2:]
 	return b[:keylen]
+}
+
+func keyFromSect(r *io.SectionReader) []byte {
+	lenbuf := [2]byte{}
+	_, err := r.Read(lenbuf[:])
+	if err != nil {
+		panic(err)
+	}
+
+	keylen := bytesToUint16(lenbuf[:])
+	outbuf := make([]byte, keylen)
+	_, err = r.Read(outbuf)
+	if err != nil {
+		panic(err)
+	}
+
+	return outbuf
 }
