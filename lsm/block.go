@@ -105,9 +105,6 @@ func DeprecatedBlockFromBytes(b []byte) (DeprecatedBlock, error) {
 	panic("not implemented")
 }
 
-type BlockMeta struct {
-}
-
 // on disk Entry representation:
 // -----------------------------------------------------------------------
 // |                           Entry #1                            | ... |

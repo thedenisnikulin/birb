@@ -14,6 +14,10 @@ var (
 	ErrKeyNotFound = errors.New("no such key in sstable")
 )
 
+type Level struct {
+	SSTables []*SSTable
+}
+
 // SSTable is a inmem view over on disk sstable.
 // SSTable has the following layout:
 // 1. blocks of data (blocks which contain keys and values),
@@ -25,6 +29,7 @@ var (
 type SSTable struct {
 	file  *os.File
 	index BlockIndex // is nil when not loaded
+	meta  SSTableMeta
 }
 
 func (t *SSTable) Exist(key []byte) bool {
@@ -32,6 +37,7 @@ func (t *SSTable) Exist(key []byte) bool {
 }
 
 // TODO implement Get for []SSTable, and bloom filter (for blocks and sstables?)
+// TODO implement block cache??
 func (t *SSTable) Get(key []byte) ([]byte, error) {
 	if t.index == nil {
 		sst, err := SSTableFromFile(t.file) // this func looks bad here honestly
@@ -98,7 +104,7 @@ func SSTableFromFile(file *os.File) (SSTable, error) {
 		return SSTable{}, err
 	}
 
-	meta, err := MetaFromSectReader(
+	meta, err := SSTableMetaFromSectReader(
 		io.NewSectionReader(file, stat.Size()-MetaSize, MetaSize))
 	if err != nil {
 		return SSTable{}, err
@@ -176,7 +182,16 @@ type Meta struct {
 	indexLen    uint16
 }
 
-func MetaFromSectReader(r *io.SectionReader) (Meta, error) {
+type BlockMeta struct {
+	Meta
+}
+
+type SSTableMeta struct {
+	Meta
+	firstKey []byte // TODO meta will be variable length then T_T
+}
+
+func SSTableMetaFromSectReader(r *io.SectionReader) (Meta, error) {
 	if r.Size() != MetaSize {
 		return Meta{}, fmt.Errorf("meta must be 8 bytes long")
 	}

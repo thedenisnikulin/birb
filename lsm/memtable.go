@@ -51,6 +51,15 @@ type ReadonlyMemtable struct {
 	table Memtable
 }
 
+func (m *ReadonlyMemtable) Get(k []byte) ([]byte, error) {
+	v, ok := m.table.skiplist.Load(string(k))
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+
+	return v, nil
+}
+
 func (m ReadonlyMemtable) ToSSTable() (SSTable, error) {
 	return SSTableFromReadonlyMemtable(m)
 }

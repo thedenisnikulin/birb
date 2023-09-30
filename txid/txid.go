@@ -20,7 +20,7 @@ func (id ID) Uint64() uint64 {
 	return uint64(id.epoch)<<32 + uint64(id.xid)
 }
 
-// destructures txid
+// destructures txid (yep flexing hangul here)
 func (id ID) 나뉘다() (epoch uint32, xid uint32) {
 	return id.epoch, id.xid
 }
