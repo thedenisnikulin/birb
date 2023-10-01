@@ -14,10 +14,6 @@ var (
 	ErrKeyNotFound = errors.New("no such key in sstable")
 )
 
-type Level struct {
-	SSTables []*SSTable
-}
-
 // SSTable is a inmem view over on disk sstable.
 // SSTable has the following layout:
 // 1. blocks of data (blocks which contain keys and values),
@@ -28,8 +24,8 @@ type Level struct {
 // blocks are accessed when a particular key is requested.
 type SSTable struct {
 	file  *os.File
-	index BlockIndex // is nil when not loaded
-	meta  SSTableMeta
+	index SSTIndex // is nil when not loaded
+	meta  Meta
 }
 
 func (t *SSTable) Exist(key []byte) bool {
@@ -48,7 +44,8 @@ func (t *SSTable) Get(key []byte) ([]byte, error) {
 		t.index = sst.index
 	}
 
-	i, found := slices.BinarySearchFunc(t.index, key, func(e BlockIndexValue, t []byte) int {
+	// find block in sst index
+	i, found := slices.BinarySearchFunc(t.index, key, func(e SSTIndexValue, t []byte) int {
 		return bytes.Compare(e.firstKey, t)
 	})
 
@@ -68,6 +65,7 @@ func (t *SSTable) Get(key []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// find entry in block index
 	i, found = slices.BinarySearchFunc(block.index, key,
 		func(e *EntryIndexValue, t []byte) int {
 			sr := io.NewSectionReader(block.file, int64(e.offset), int64(e.len))
@@ -104,22 +102,22 @@ func SSTableFromFile(file *os.File) (SSTable, error) {
 		return SSTable{}, err
 	}
 
-	meta, err := SSTableMetaFromSectReader(
+	meta, err := MetaFromSectReader(
 		io.NewSectionReader(file, stat.Size()-MetaSize, MetaSize))
 	if err != nil {
 		return SSTable{}, err
 	}
 
-	index, err := BlockIndexFromSectReader(
-		io.NewSectionReader(file, int64(meta.indexOffset), int64(meta.indexLen)), 0)
+	index, err := SSTIndexFromSectReader(
+		io.NewSectionReader(file, int64(meta.IndexOffset), int64(meta.IndexLen)), 0)
 	if err != nil {
 		return SSTable{}, err
 	}
 
-	return SSTable{file, index}, nil
+	return SSTable{file, index, meta}, nil
 }
 
-func BlockIndexFromSectReader(r *io.SectionReader, blocksLen int) (BlockIndex, error) {
+func SSTIndexFromSectReader(r *io.SectionReader, blocksLen int) (SSTIndex, error) {
 	buf := make([]byte, 0, r.Size())
 	_, err := r.Read(buf)
 	if err != nil {
@@ -127,9 +125,9 @@ func BlockIndexFromSectReader(r *io.SectionReader, blocksLen int) (BlockIndex, e
 	}
 
 	// FIXME count by blocksLen
-	indexVals := make(BlockIndex, 0)
+	indexVals := make(SSTIndex, 0)
 	for left := r.Size(); left > 0; {
-		val, read, err := BlockIndexValueFromBytes(buf)
+		val, read, err := SSTIndexValueFromBytes(buf)
 		if err != nil {
 			return nil, err
 		}
@@ -142,56 +140,46 @@ func BlockIndexFromSectReader(r *io.SectionReader, blocksLen int) (BlockIndex, e
 	return indexVals, nil
 }
 
-type BlockIndex []BlockIndexValue
+type SSTIndex []SSTIndexValue
 
-type BlockIndexValue struct {
-	firstKey []byte
+type SSTIndexValue struct {
 	offset   uint16
 	len      uint16
+	firstKey []byte
+	lastKey  []byte
 }
 
-func BlockIndexValueFromBytes(b []byte) (idxval BlockIndexValue, read int, err error) {
-	idxval = BlockIndexValue{}
+func SSTIndexValueFromBytes(b []byte) (idxval SSTIndexValue, read int, err error) {
+	idxval = SSTIndexValue{}
 
-	if len(b) < 2 {
-		return BlockIndexValue{}, 0, fmt.Errorf("invalid BlockIndexValue layout")
-	}
-
-	keylen := binary.LittleEndian.Uint16(b)
-	b = b[2:]
-	idxval.firstKey = b[:keylen]
-	b = b[keylen:]
-
-	if len(b) != 4 {
-		return BlockIndexValue{}, 0, fmt.Errorf("invalid BlockIndexValue layout")
-	}
-
+	// read offset and len
 	idxval.offset = binary.LittleEndian.Uint16(b)
 	b = b[2:]
 	idxval.len = binary.LittleEndian.Uint16(b)
+	b = b[2:]
 
-	return idxval, int(keylen + 2*3), nil
+	// read first and last keys
+	firstKey, fread := keyFromBytes(b)
+	b = b[read:]
+	lastKey, lread := keyFromBytes(b)
+
+	idxval.firstKey = firstKey
+	idxval.lastKey = lastKey
+
+	return idxval, int(fread + lread + 2 + 2), nil
 }
 
 const MetaSize = 8
 
 type Meta struct {
-	dataOffset  uint16
-	dataLen     uint16
-	indexOffset uint16
-	indexLen    uint16
+	DataOffset    uint16
+	DataLen       uint16
+	IndexOffset   uint16
+	IndexLen      uint16
+	LastKeyOffset uint16
 }
 
-type BlockMeta struct {
-	Meta
-}
-
-type SSTableMeta struct {
-	Meta
-	firstKey []byte // TODO meta will be variable length then T_T
-}
-
-func SSTableMetaFromSectReader(r *io.SectionReader) (Meta, error) {
+func MetaFromSectReader(r *io.SectionReader) (Meta, error) {
 	if r.Size() != MetaSize {
 		return Meta{}, fmt.Errorf("meta must be 8 bytes long")
 	}
@@ -204,13 +192,15 @@ func SSTableMetaFromSectReader(r *io.SectionReader) (Meta, error) {
 
 	meta := Meta{}
 
-	meta.dataOffset = binary.LittleEndian.Uint16(buf)
+	meta.DataOffset = binary.LittleEndian.Uint16(buf)
 	buf = buf[2:]
-	meta.dataLen = binary.LittleEndian.Uint16(buf)
+	meta.DataLen = binary.LittleEndian.Uint16(buf)
 	buf = buf[2:]
-	meta.indexOffset = binary.LittleEndian.Uint16(buf)
+	meta.IndexOffset = binary.LittleEndian.Uint16(buf)
 	buf = buf[2:]
-	meta.indexLen = binary.LittleEndian.Uint16(buf)
+	meta.IndexLen = binary.LittleEndian.Uint16(buf)
+	buf = buf[2:]
+	meta.LastKeyOffset = binary.LittleEndian.Uint16(buf)
 
 	return meta, nil
 }

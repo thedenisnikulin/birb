@@ -204,10 +204,10 @@ func bytesToUint16(b []byte) uint16 {
 	return binary.LittleEndian.Uint16(b)
 }
 
-func keyFromBytes(b []byte) []byte {
+func keyFromBytes(b []byte) (key []byte, read int) {
 	keylen := bytesToUint16(b[:2])
 	b = b[2:]
-	return b[:keylen]
+	return b[:keylen], 2 + int(keylen)
 }
 
 func keyFromSect(r *io.SectionReader) []byte {

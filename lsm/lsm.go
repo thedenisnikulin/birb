@@ -4,7 +4,9 @@
 package lsm
 
 import (
+	"bytes"
 	"errors"
+	"slices"
 	"sync"
 )
 
@@ -81,7 +83,41 @@ func (tree *LSMTree) Get(k []byte) ([]byte, error) {
 	}
 
 	// try find in sstables
-	panic("")
+	var (
+		sst   *SSTable
+		found bool
+	)
+	for _, level := range tree.lvln {
+		i, found := slices.BinarySearchFunc(level, k, func(e *SSTable, t []byte) int {
+			firstKey := e.index[0].firstKey
+			lastKey := e.index[len(e.index)-1].lastKey
+
+			moreThanFirst := bytes.Compare(t, firstKey) > 0
+			lessThanLast := bytes.Compare(t, lastKey) < 0
+
+			if !moreThanFirst {
+				return -1
+			}
+
+			if !lessThanLast {
+				return 1
+			}
+
+			return 0
+		})
+
+		if found {
+			sst = level[i]
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, ErrKeyNotFound
+	}
+
+	return sst.Get(k)
 }
 
 func (tree *LSMTree) Put(k, v []byte) error {
@@ -96,7 +132,7 @@ func (tree *LSMTree) Put(k, v []byte) error {
 
 	// worst case: we block here if compaction is still in progress.
 	// it means that memtable and memro tables are full
-	tree.compact.Waitc() <- struct{}{}
+	tree.compact.Waitc() <- struct{}{} /// TODO rename Compactor to PartialCompactor?
 
 	tree.rodataGuard.Lock()
 	if len(tree.memro) < tree.opt.MaxMemroTables {
@@ -109,7 +145,7 @@ func (tree *LSMTree) Put(k, v []byte) error {
 		// if we reached max memro limit, trigger the compaction right away so
 		// we win time until worst case happens
 		if len(tree.memro) == tree.opt.MaxMemroTables {
-			tree.compact.Runc() <- struct{}{}
+			tree.compact.Triggerc() <- struct{}{}
 		}
 	}
 	tree.rodataGuard.Unlock()
