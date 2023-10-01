@@ -126,7 +126,7 @@ func (tree *LSMTree) Put(k, v []byte) error {
 
 	if tree.mem.Size() < tree.opt.MemtableThreshold {
 		// best case: just write to memtable.
-		// most callers will end up here which is ✨fast✨
+		// most callers will end up here which is ✨blazingly fast✨
 		return tree.mem.Put(k, v)
 	}
 
