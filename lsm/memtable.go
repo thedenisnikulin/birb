@@ -43,6 +43,10 @@ func (m *Memtable) Clone() *Memtable {
 	return &Memtable{clone, size}
 }
 
+func (m *Memtable) Range(f func(key string, value []byte) bool) {
+	m.skiplist.Range(f)
+}
+
 func (m *Memtable) AsReadonly() ReadonlyMemtable {
 	return ReadonlyMemtable{*m}
 }
@@ -60,6 +64,10 @@ func (m *ReadonlyMemtable) Get(k []byte) ([]byte, error) {
 	return v, nil
 }
 
-func (m ReadonlyMemtable) ToSSTable() (SSTable, error) {
-	return SSTableFromReadonlyMemtable(m)
+func (m ReadonlyMemtable) Range(f func(key string, value []byte) bool) {
+	m.table.Range(f)
+}
+
+func MemtableFromSSTable(sst *SSTable) *Memtable {
+
 }

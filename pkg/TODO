@@ -1,0 +1,2 @@
+1. make reflexutil (current internal/util) in pkg
+2. move bvalue, codec to pkg?

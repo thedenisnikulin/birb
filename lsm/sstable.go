@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	ErrKeyNotFound = errors.New("no such key in sstable")
+	ErrKeyNotFound = errors.New("no such key found")
 )
 
 // SSTable is a inmem view over on disk sstable.
@@ -26,6 +26,24 @@ type SSTable struct {
 	file  *os.File
 	index SSTIndex // is nil when not loaded
 	meta  Meta
+}
+
+func (t *SSTable) Size() uint {
+	return uint(t.meta.DataLen) + uint(t.meta.IndexLen) + MetaSize
+}
+
+func (t *SSTable) FirstKey() []byte {
+	return t.index[0].firstKey
+}
+
+func (t *SSTable) LastKey() []byte {
+	return t.index[len(t.index)-1].lastKey
+}
+
+func (t *SSTable) InRange(k []byte) bool {
+	moreThanFirst := bytes.Compare(k, t.FirstKey()) >= 0
+	lessThanLast := bytes.Compare(k, t.LastKey()) <= 0
+	return moreThanFirst && lessThanLast
 }
 
 func (t *SSTable) Exist(key []byte) bool {
@@ -60,14 +78,14 @@ func (t *SSTable) Get(key []byte) ([]byte, error) {
 		int64(blockIdx.offset),
 		int64(blockIdx.len))
 
-	block, err := BlockFromBytes(reader)
+	block, err := BlockFromSectReader(reader)
 	if err != nil {
 		return nil, err
 	}
 
 	// find entry in block index
 	i, found = slices.BinarySearchFunc(block.index, key,
-		func(e *EntryIndexValue, t []byte) int {
+		func(e *BlockIndexValue, t []byte) int {
 			sr := io.NewSectionReader(block.file, int64(e.offset), int64(e.len))
 			key := keyFromSect(sr)
 			e.r = sr
@@ -86,13 +104,15 @@ func (t *SSTable) Get(key []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return EntryFromBytes(entryBuf).value, nil
+	return EntryFromBytes(entryBuf).Value, nil
 }
 
-func SSTableFromReadonlyMemtable(memro ReadonlyMemtable) (SSTable, error) {
+func SSTableFromReadonlyMemtable(memro ReadonlyMemtable, filename string) (SSTable, error) {
 	memro.table.skiplist.Range(func(key string, value []byte) bool {
 		return true
 	})
+
+	// TODO: create file with name
 	panic("not implemented")
 }
 
@@ -117,6 +137,7 @@ func SSTableFromFile(file *os.File) (SSTable, error) {
 	return SSTable{file, index, meta}, nil
 }
 
+// TODO: blocksLen (pass it as opts?)
 func SSTIndexFromSectReader(r *io.SectionReader, blocksLen int) (SSTIndex, error) {
 	buf := make([]byte, 0, r.Size())
 	_, err := r.Read(buf)
@@ -124,7 +145,7 @@ func SSTIndexFromSectReader(r *io.SectionReader, blocksLen int) (SSTIndex, error
 		return nil, err
 	}
 
-	// FIXME count by blocksLen
+	// FIXME: count by blocksLen
 	indexVals := make(SSTIndex, 0)
 	for left := r.Size(); left > 0; {
 		val, read, err := SSTIndexValueFromBytes(buf)
@@ -169,7 +190,7 @@ func SSTIndexValueFromBytes(b []byte) (idxval SSTIndexValue, read int, err error
 	return idxval, int(fread + lread + 2 + 2), nil
 }
 
-const MetaSize = 8
+const MetaSize = 10
 
 type Meta struct {
 	DataOffset    uint16

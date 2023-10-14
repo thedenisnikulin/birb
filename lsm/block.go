@@ -13,10 +13,10 @@ import (
 // entries are accessed on request.
 type Block struct {
 	file  *io.SectionReader
-	index EntryIndex // TODO make it sparse? (not every entry in index)
+	index BlockIndex // TODO make it sparse? (not every entry in index)
 }
 
-func BlockFromBytes(r *io.SectionReader) (Block, error) {
+func BlockFromSectReader(r *io.SectionReader) (Block, error) {
 	metaBuf := make([]byte, MetaSize)
 	_, err := r.ReadAt(metaBuf, r.Size()-MetaSize)
 	if err != nil {
@@ -28,7 +28,7 @@ func BlockFromBytes(r *io.SectionReader) (Block, error) {
 		return Block{}, err
 	}
 
-	index := make(EntryIndex, 0, meta.indexLen/4) // each entry is 4 bytes long
+	index := make(BlockIndex, 0, meta.indexLen/4) // each entry is 4 bytes long
 	endoff := meta.indexOffset + meta.indexLen
 	for off := meta.indexOffset; off < endoff; off = +4 {
 		buf := [4]byte{}
@@ -48,25 +48,25 @@ func BlockFromBytes(r *io.SectionReader) (Block, error) {
 	return Block{r, index}, nil
 }
 
-type EntryIndex []*EntryIndexValue
+type BlockIndex []*BlockIndexValue
 
-func EntryIndexValueFromBytes(buf []byte) (idxval EntryIndexValue, err error) {
+func EntryIndexValueFromBytes(buf []byte) (idxval BlockIndexValue, err error) {
 	if len(buf) < 4 {
-		return EntryIndexValue{}, fmt.Errorf("invalid entry index value length")
+		return BlockIndexValue{}, fmt.Errorf("invalid entry index value length")
 	}
 
 	off := binary.LittleEndian.Uint16(buf)
 	len := binary.LittleEndian.Uint16(buf[2:])
-	return EntryIndexValue{offset: off, len: len}, nil
+	return BlockIndexValue{offset: off, len: len}, nil
 }
 
-type EntryIndexValue struct {
-	offset uint16
+type BlockIndexValue struct {
+	offset uint16 // TODO: remove offset and len in favor of r?
 	len    uint16
-	r      *io.SectionReader
+	r      *io.SectionReader // a ready to read reader with .offset and .len
 }
 
-// TODO deprecate in favor of BlockLazy
+// TODO deprecate in favor of Block
 // on disk DeprecatedBlock representation:
 // ---------------------------------------------------------------------
 // |          data         |          offsets          |      meta     |
@@ -78,33 +78,6 @@ type DeprecatedBlock struct {
 	entries []Entry
 }
 
-func NewBlock(maxSize int) DeprecatedBlock {
-	return DeprecatedBlock{
-		entries: make([]Entry, 0),
-	}
-}
-
-// TODO should push sorted somehow
-// func (block *Block) Push(k, v []byte) {
-// 	entry := NewBlockEntry(k, v)
-// 	block.data = append(block.data, entry...)
-// 	block.offests = append(block.offests, uint16(len(block.data)-1))
-// 	block.len++
-// }
-
-// ???
-func (DeprecatedBlock) Checksum() []byte {
-	panic("not implemented")
-}
-
-func (DeprecatedBlock) Bytes() []byte {
-	panic("not implemented")
-}
-
-func DeprecatedBlockFromBytes(b []byte) (DeprecatedBlock, error) {
-	panic("not implemented")
-}
-
 // on disk Entry representation:
 // -----------------------------------------------------------------------
 // |                           Entry #1                            | ... |
@@ -112,29 +85,29 @@ func DeprecatedBlockFromBytes(b []byte) (DeprecatedBlock, error) {
 // | key_len (2B) | key (keylen) | value_len (2B) | value (varlen) | ... |
 // -----------------------------------------------------------------------
 type Entry struct {
-	key   []byte
-	value []byte
+	Key   []byte
+	Value []byte
 }
 
 func (entry Entry) Bytes() []byte {
-	if len(entry.key) > math.MaxUint16 || len(entry.value) > math.MaxUint16 {
+	if len(entry.Key) > math.MaxUint16 || len(entry.Value) > math.MaxUint16 {
 		panic("block entry key or value size is larger than max(uint16)")
 	}
 
-	if len(entry.key) == 0 {
+	if len(entry.Key) == 0 {
 		panic("block entry key cannot be empty")
 	}
 
 	lenbuf := make([]byte, 2)
 	bytes := make([]byte, 0, 4)
 
-	binary.LittleEndian.PutUint16(lenbuf, uint16(len(entry.key)))
+	binary.LittleEndian.PutUint16(lenbuf, uint16(len(entry.Key)))
 	bytes = append(bytes, lenbuf...)
-	bytes = append(bytes, entry.key...)
+	bytes = append(bytes, entry.Key...)
 
-	binary.LittleEndian.PutUint16(lenbuf, uint16(len(entry.value)))
+	binary.LittleEndian.PutUint16(lenbuf, uint16(len(entry.Value)))
 	bytes = append(bytes, lenbuf...)
-	bytes = append(bytes, entry.value...)
+	bytes = append(bytes, entry.Value...)
 
 	return bytes
 }
@@ -150,50 +123,7 @@ func EntryFromBytes(entry []byte) Entry {
 	start = 2 + valOffset
 	val := []byte(entry[start : start+valLen])
 
-	return Entry{key: key, value: val}
-}
-
-type BlockIter struct {
-	block  DeprecatedBlock
-	offset int
-}
-
-func (it *BlockIter) SeekToFirst() {
-	if len(it.block.entries) == 0 {
-		return
-	}
-
-	it.offset = 0
-}
-
-func (it *BlockIter) SeekToKey(key []byte) bool {
-	offset, found := slices.BinarySearchFunc(it.block.entries, key,
-		func(entry Entry, target []byte) int {
-			return bytes.Compare(entry.key, target)
-		})
-
-	if found {
-		it.offset = offset
-	}
-
-	return found
-}
-
-func (it *BlockIter) Next() bool {
-	if it.offset+1 >= len(it.block.entries) {
-		return false
-	}
-
-	it.offset++
-	return true
-}
-
-func (it BlockIter) Entry() Entry {
-	if it.offset >= len(it.block.entries) {
-		panic("out of bounds")
-	}
-
-	return it.block.entries[it.offset]
+	return Entry{Key: key, Value: val}
 }
 
 func bytesToUint16(b []byte) uint16 {
@@ -225,4 +155,39 @@ func keyFromSect(r *io.SectionReader) []byte {
 	}
 
 	return outbuf
+}
+
+type Iter[T any] interface {
+	Value() T
+	Next() bool
+	Err() error
+}
+
+type BlockIter struct {
+	block *Block
+	idx   int
+	err   error
+}
+
+func (it *BlockIter) Next() bool {
+	return len(it.block.index) > it.idx && it.err == nil
+}
+
+func (it *BlockIter) Err() error {
+	return it.err
+}
+
+func (it *BlockIter) Value() Entry {
+	r := it.block.index[it.idx].r
+
+	buf := make([]byte, 0, r.Size())
+	_, err := r.Read(buf)
+	if err != nil {
+		it.err = err
+		return Entry{}
+	}
+
+	it.idx++
+
+	return EntryFromBytes(buf)
 }
