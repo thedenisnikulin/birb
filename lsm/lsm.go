@@ -5,10 +5,19 @@
 package lsm
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
+
+	"log/slog"
 )
 
 // TODO: left to implement:
@@ -24,16 +33,20 @@ type Options struct {
 	L1Threshold          int // Nth level thld (where N>1) is calculated as (N-1)*NonL0ThresholdMultipler
 	LNThresholdMultipler int
 
+	BlockThreshold int
+
 	MaxMemroTables   int
 	MaxL0Tables      int
 	MaxL1Tables      int // Nth level len (where N>1) is calculated as (N-1)+MaxNonL0TablesAdder
 	MaxLNTablesAdder int
 }
 
-var DefaultOptions = Options{
+var DefaultOptions = &Options{
 	MemtableThreshold:    1 << 20,
 	L1Threshold:          10 << 20,
 	LNThresholdMultipler: 10,
+
+	BlockThreshold: 1 << 6,
 
 	MaxMemroTables:   2,
 	MaxL0Tables:      2,
@@ -128,20 +141,25 @@ func (tree *LSMTree) Get(k []byte) ([]byte, error) {
 
 func (tree *LSMTree) Put(k, v []byte) error {
 	tree.rodataGuard.RLock()
-	defer tree.rodataGuard.RUnlock()
 
 	if tree.mem.Size() < tree.opt.MemtableThreshold {
+		slog.Debug("putting into memtable")
 		// best case: just write to memtable.
 		// most callers will end up here which is ✨blazingly fast✨
+		tree.rodataGuard.RUnlock()
 		return tree.mem.Put(k, v)
 	}
 
+	tree.rodataGuard.RUnlock()
+
+	slog.Debug("waiting on compaction")
 	// worst case: we block here if compaction is still in progress.
 	// it means that memtable and memro tables are full
 	tree.compact.Waitc() <- struct{}{} /// TODO rename Compactor to PartialCompactor?
 
 	tree.rodataGuard.Lock()
 	if len(tree.memro) < tree.opt.MaxMemroTables {
+		slog.Debug("dumping memtable as readonly")
 		// ok case: memtable is full but memro tables (readonly memtables)
 		// are not, just dump memtable to memro tables
 		ro := tree.mem.Clone().AsReadonly() // TODO do i need clone here?
@@ -151,6 +169,7 @@ func (tree *LSMTree) Put(k, v []byte) error {
 		// if we reached max memro limit, trigger the compaction right away so
 		// we win time until worst case happens
 		if len(tree.memro) == tree.opt.MaxMemroTables {
+			slog.Debug("readonly memtable limit reached, triggering compaction")
 			tree.compact.Triggerc() <- struct{}{}
 		}
 	}
@@ -168,6 +187,128 @@ func (t *LSMTree) Close() error {
 	panic("unimpl")
 }
 
-func Recover(dir string) (*LSMTree, error) {
-	panic("unimpl")
+func Recover(ctx context.Context, dir string, opts *Options) (*LSMTree, error) {
+	if opts == nil {
+		opts = DefaultOptions
+	}
+
+	absdir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// first read manifest file and get paths of wal and sst levels
+	f, err := os.Open(path.Join(dir, "MANIFEST"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	if errors.Is(err, os.ErrNotExist) {
+		slog.Debug("MANIFEST not foudn, creating at " +
+			path.Join(absdir, "WAL"))
+
+		if err := os.Mkdir(path.Join(absdir), 0777); err != nil {
+			return nil, fmt.Errorf("making dir: %w", err)
+		}
+
+		wal, err := os.Create(path.Join(absdir, "WAL"))
+		if err != nil {
+			return nil, fmt.Errorf("creating wal: %w", err)
+		}
+
+		defer wal.Close()
+
+		f, err = os.Create(path.Join(absdir, "MANIFEST"))
+		if err != nil {
+			return nil, fmt.Errorf("creating manifest: %w", err)
+		}
+
+		_, err = fmt.Fprintln(f, path.Join(absdir, "WAL"))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Split(bufio.ScanLines)
+
+	if !scanner.Scan() {
+		return nil, errors.New("bad manifest")
+	}
+
+	walPath := scanner.Text()
+	levelPaths := make([][]string, 0)
+	for scanner.Scan() {
+		line := scanner.Text()
+		tablePaths := strings.Split(line, ",")
+		levelPaths = append(levelPaths, tablePaths)
+	}
+
+	if scanner.Err() != nil {
+		return nil, fmt.Errorf("reading file: %w", err)
+	}
+
+	// TODO implement wal
+	walPath = walPath
+
+	// second read all paths to load sstables
+	lvls := make([][]*SSTable, 0, len(levelPaths))
+	for _, paths := range levelPaths {
+		lvl := make([]*SSTable, 0, len(paths))
+		for _, p := range paths {
+			f, err := os.OpenFile(p, os.O_RDWR, 0666)
+			if err != nil {
+				return nil, fmt.Errorf("opening %s: %w", p, err)
+			}
+
+			sst, err := SSTableFromFile(f)
+			if err != nil {
+				return nil, err
+			}
+
+			lvl = append(lvl, &sst)
+			f.Close()
+		}
+		lvls = append(lvls, lvl)
+	}
+
+	lvl0 := make([]*SSTable, 0)
+	if len(lvls) > 0 {
+		lvl0 = lvls[0]
+	}
+
+	lvln := make([][]*SSTable, 0)
+	if len(lvls) > 1 {
+		lvln = lvls[1:]
+	}
+
+	// third initialize tree and compaction
+	compactorHandle := CompactorHandle{
+		triggerc: make(chan struct{}),
+		waitc:    make(chan struct{}),
+	}
+
+	tree := &LSMTree{
+		mem:         NewMemtable(),
+		wal:         nil,
+		rodataGuard: new(sync.RWMutex),
+		memro:       make([]*ReadonlyMemtable, 0),
+		lvl0:        lvl0,
+		lvln:        lvln,
+		compact:     compactorHandle,
+		opt:         *opts,
+	}
+
+	compactor := Compactor{
+		handle: compactorHandle,
+		tree:   tree,
+		opt:    *opts,
+	}
+
+	// fourth run compactor in bg and finish
+	go compactor.Listen(ctx)
+
+	return tree, nil
 }

@@ -69,5 +69,5 @@ func (m ReadonlyMemtable) Range(f func(key string, value []byte) bool) {
 }
 
 func MemtableFromSSTable(sst *SSTable) *Memtable {
-
+	panic("")
 }

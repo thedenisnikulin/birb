@@ -2,6 +2,7 @@ package lsm
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 )
 
@@ -30,6 +31,7 @@ func (c *Compactor) Listen(ctx context.Context) {
 	for {
 		select {
 		case <-c.handle.triggerc:
+			slog.Debug("triggered!")
 			// TODO can do only partial compaction synchronously, and finish the
 			// rest of compaction asynchronously (e.g. memro and L0 are full,
 			// we merge L0 and L1, put memro into L0, thus memro is
@@ -37,6 +39,7 @@ func (c *Compactor) Listen(ctx context.Context) {
 			// asynchronously), in order to release c.waitc faster
 			c.compact()
 		case <-c.handle.waitc:
+			slog.Debug("go go go")
 		case <-ctx.Done():
 			return
 		}
@@ -47,7 +50,11 @@ func (c *Compactor) compact() error {
 	// if L0 has sufficient space, just dump readonly memtables into it
 	if len(c.tree.lvl0)+len(c.tree.memro) <= c.opt.MaxL0Tables {
 		for _, r := range c.tree.memro {
-			sst, err := SSTableFromReadonlyMemtable(*r, "SST_L0_") // TODO filename
+			sst, err := SSTableFromReadonlyMemtable(
+				*r,
+				"SST_L0_"+strconv.Itoa(len(c.tree.lvl0)), // TODO filename
+				c.opt,
+			)
 			if err != nil {
 				return err
 			}
@@ -92,6 +99,7 @@ func (c *Compactor) compact() error {
 		sst1, err := SSTableFromReadonlyMemtable(
 			mem1.AsReadonly(),
 			"SST_L1_"+strconv.Itoa(i), // TODO filename
+			c.opt,
 		)
 
 		if err != nil {
@@ -117,7 +125,9 @@ func (c *Compactor) compact() error {
 	return nil
 }
 
-func (c *Compactor) compactFull() {}
+func (c *Compactor) compactFull() {
+
+}
 
 // Merges 1 memtable with N memtables producing M memtables where M>=N.
 // Result len is M because memtable size is fixed and will likely

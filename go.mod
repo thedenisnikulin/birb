@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/golang-cz/devslog v0.0.4 // indirect
 	github.com/zhangyunhao116/fastrand v0.3.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

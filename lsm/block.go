@@ -1,12 +1,10 @@
 package lsm
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
-	"slices"
 )
 
 // Block is lazy, which means only block entry index is loaded into memory,
@@ -17,20 +15,14 @@ type Block struct {
 }
 
 func BlockFromSectReader(r *io.SectionReader) (Block, error) {
-	metaBuf := make([]byte, MetaSize)
-	_, err := r.ReadAt(metaBuf, r.Size()-MetaSize)
+	meta, err := MetaFromSectReader(io.NewSectionReader(r, r.Size()-MetaSize, MetaSize))
 	if err != nil {
 		return Block{}, err
 	}
 
-	meta, err := MetaFromBytes(metaBuf)
-	if err != nil {
-		return Block{}, err
-	}
-
-	index := make(BlockIndex, 0, meta.indexLen/4) // each entry is 4 bytes long
-	endoff := meta.indexOffset + meta.indexLen
-	for off := meta.indexOffset; off < endoff; off = +4 {
+	index := make(BlockIndex, 0, meta.IndexLen/4) // each entry is 4 bytes long
+	endoff := meta.IndexOffset + meta.IndexLen
+	for off := meta.IndexOffset; off < endoff; off = +4 {
 		buf := [4]byte{}
 		_, err := r.ReadAt(buf[:], int64(off))
 		if err != nil {

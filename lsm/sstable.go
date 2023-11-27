@@ -1,6 +1,7 @@
 package lsm
 
 import (
+	"birb/pkg/byteutil"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -63,7 +64,7 @@ func (t *SSTable) Get(key []byte) ([]byte, error) {
 	}
 
 	// find block in sst index
-	i, found := slices.BinarySearchFunc(t.index, key, func(e SSTIndexValue, t []byte) int {
+	i, found := slices.BinarySearchFunc(t.index, key, func(e SSTIndexEntry, t []byte) int {
 		return bytes.Compare(e.firstKey, t)
 	})
 
@@ -107,13 +108,93 @@ func (t *SSTable) Get(key []byte) ([]byte, error) {
 	return EntryFromBytes(entryBuf).Value, nil
 }
 
-func SSTableFromReadonlyMemtable(memro ReadonlyMemtable, filename string) (SSTable, error) {
-	memro.table.skiplist.Range(func(key string, value []byte) bool {
+// TODO: localize Options
+func SSTableFromReadonlyMemtable(
+	memro ReadonlyMemtable,
+	path string,
+	opts Options,
+) (SSTable, error) {
+	table := byteutil.NewSeqWriter[byte]()
+	tableIndex := byteutil.NewSeqWriter[byte]()
+
+	block := byteutil.NewSeqWriter[byte]()
+	blockIndex := byteutil.NewSeqWriter[byte]()
+	var firstBlockKey *string
+
+	memro.Range(func(key string, value []byte) bool {
+		if firstBlockKey == nil {
+			firstBlockKey = &key
+		}
+
+		startOffset := block.Offset()
+		// write entry
+		block.Write(byteutil.Uint16ToByteSlice(uint16(len(key))))
+		block.Write([]byte(key))
+		block.Write(byteutil.Uint16ToByteSlice(uint16(len(value))))
+		block.Write(value)
+		// write index
+		blockIndex.Write(byteutil.Uint16ToByteSlice(
+			uint16(table.Offset() + block.Offset())))
+		blockIndex.Write(byteutil.Uint16ToByteSlice(
+			uint16(block.Offset() - startOffset)))
+
+		if block.Len() >= opts.BlockThreshold {
+			tableStartOffset := table.Offset()
+			meta := Meta{
+				DataOffset:  uint16(tableStartOffset),
+				DataLen:     uint16(block.Len()),
+				IndexOffset: uint16(tableStartOffset + block.Len()),
+				IndexLen:    uint16(blockIndex.Len()),
+			}
+			// write block data
+			table.Write(block.Slice())
+			// write block index
+			table.Write(blockIndex.Slice())
+			// write block meta
+			table.Write(byteutil.Uint16ToByteSlice(meta.DataOffset))
+			table.Write(byteutil.Uint16ToByteSlice(meta.DataLen))
+			table.Write(byteutil.Uint16ToByteSlice(meta.IndexOffset))
+			table.Write(byteutil.Uint16ToByteSlice(meta.IndexLen))
+
+			// write entry to table index: offset, len, first key, last key
+			tableIndex.Write(byteutil.Uint16ToByteSlice(uint16(tableStartOffset)))
+			tableIndex.Write(byteutil.Uint16ToByteSlice(uint16(block.Len())))
+
+			tableIndex.Write(
+				byteutil.Uint16ToByteSlice(uint16(len(*firstBlockKey))))
+			tableIndex.Write([]byte(*firstBlockKey))
+
+			tableIndex.Write(byteutil.Uint16ToByteSlice(uint16(len(key))))
+			tableIndex.Write([]byte(key))
+
+			firstBlockKey = nil
+			block = byteutil.NewSeqWriter[byte]()
+			blockIndex = byteutil.NewSeqWriter[byte]()
+		}
+
 		return true
 	})
 
-	// TODO: create file with name
-	panic("not implemented")
+	file, err := os.Create(path)
+	if err != nil {
+		return SSTable{}, err
+	}
+
+	r := bytes.NewReader(tableIndex.Slice())
+	sr := io.NewSectionReader(r, 0, int64(r.Len()))
+	index, err := SSTIndexFromSectReader(sr, opts.BlockThreshold)
+	if err != nil {
+		return SSTable{}, err
+	}
+
+	meta := Meta{
+		DataOffset:  0,
+		DataLen:     uint16(table.Len()),
+		IndexOffset: uint16(table.Len()),
+		IndexLen:    uint16(tableIndex.Len()),
+	}
+
+	return SSTable{file, index, meta}, nil
 }
 
 func SSTableFromFile(file *os.File) (SSTable, error) {
@@ -161,17 +242,17 @@ func SSTIndexFromSectReader(r *io.SectionReader, blocksLen int) (SSTIndex, error
 	return indexVals, nil
 }
 
-type SSTIndex []SSTIndexValue
+type SSTIndex []SSTIndexEntry
 
-type SSTIndexValue struct {
+type SSTIndexEntry struct {
 	offset   uint16
 	len      uint16
 	firstKey []byte
 	lastKey  []byte
 }
 
-func SSTIndexValueFromBytes(b []byte) (idxval SSTIndexValue, read int, err error) {
-	idxval = SSTIndexValue{}
+func SSTIndexValueFromBytes(b []byte) (idxval SSTIndexEntry, read int, err error) {
+	idxval = SSTIndexEntry{}
 
 	// read offset and len
 	idxval.offset = binary.LittleEndian.Uint16(b)
@@ -190,14 +271,14 @@ func SSTIndexValueFromBytes(b []byte) (idxval SSTIndexValue, read int, err error
 	return idxval, int(fread + lread + 2 + 2), nil
 }
 
-const MetaSize = 10
+const MetaSize = 8
 
 type Meta struct {
-	DataOffset    uint16
-	DataLen       uint16
-	IndexOffset   uint16
-	IndexLen      uint16
-	LastKeyOffset uint16
+	DataOffset  uint16
+	DataLen     uint16
+	IndexOffset uint16
+	IndexLen    uint16
+	//LastKeyOffset uint16
 }
 
 func MetaFromSectReader(r *io.SectionReader) (Meta, error) {
@@ -220,8 +301,8 @@ func MetaFromSectReader(r *io.SectionReader) (Meta, error) {
 	meta.IndexOffset = binary.LittleEndian.Uint16(buf)
 	buf = buf[2:]
 	meta.IndexLen = binary.LittleEndian.Uint16(buf)
-	buf = buf[2:]
-	meta.LastKeyOffset = binary.LittleEndian.Uint16(buf)
+	//buf = buf[2:]
+	//meta.LastKeyOffset = binary.LittleEndian.Uint16(buf)
 
 	return meta, nil
 }
