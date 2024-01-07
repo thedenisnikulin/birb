@@ -42,12 +42,8 @@ linters:
     - gocritic
     - misspell
     - gofumpt
-    - contextcheck # XXX may need //nolint sometimes
-    - nilerr # XXX may need //nolint sometimes
-    # - errcheck        # REASON: prohibits unchecked error in defer, won't use unless fixed
-    # - ireturn         # REASON: won't allow to return something like pgx.Row (see involta-go-packages/database)
-    # - wsl             # REASON: emits too many controversial warnings
-    # - forcetypeassert # REASON: sometimes the only thing is to panic if assertion goes wrong
+    - contextcheck
+    - nilerr
   disable: []
   presets: []
   fast: true
@@ -79,7 +75,6 @@ linters-settings:
       - name: "unconditional-recursion"
       - name: "defer"
       - name: "datarace"
-      # should force devs make more files inside a package (hecking structs.go)
       - name: "max-public-structs"
         arguments: [7]
       - name: "empty-lines"
